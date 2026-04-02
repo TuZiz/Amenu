@@ -8,7 +8,7 @@ AMenu first establishes a shorter canonical menu DSL and a unified command entry
 
 - [x] **Phase 1: Menu DSL Foundation** - Canonical DSL, `/amenu`, and first-screen product alignment
 - [x] **Phase 2: Runtime Interaction Layer** - Runtime actions, prompt lifecycle, back stack, refresh, and permission feedback
-- [x] **Phase 3: Platform Compatibility Layer** - Spigot/Paper compatibility hardening and Folia scheduling abstraction
+- [ ] **Phase 3: Platform Compatibility Layer** - Spigot/Paper compatibility hardening and Folia scheduling abstraction
 - [ ] **Phase 4: Advanced Menu Features** - Pagination, conditions, async lists, and richer bindings
 
 ## Phase Details
@@ -18,7 +18,7 @@ AMenu first establishes a shorter canonical menu DSL and a unified command entry
 **Goal**: Establish a shorter YAML DSL, a unified `/amenu` entrypoint, and clear general menu-plugin positioning.  
 **Depends on**: Nothing  
 **Requirements**: MENU-01, MENU-02, MENU-03  
-**Status**: Complete (2026-04-02)
+**Status**: Human verification pending (2026-04-02)
 
 Plans:
 - [x] 01-01: Canonical DSL path, Java 21 harness, and parser regression baseline
@@ -45,6 +45,7 @@ Plans:
 Plans:
 - [x] 03-01: Platform scheduler abstraction and main-thread/region-safe execution model
 - [x] 03-02: Compatibility verification for bundled examples and input flows
+- [ ] 03-UAT: Real player `/amenu` navigation and prompt pass on Paper or Folia
 
 ### Phase 4: Advanced Menu Features
 
@@ -62,8 +63,8 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Menu DSL Foundation | 2/2 | Complete | 2026-04-02 |
 | 2. Runtime Interaction Layer | 2/2 | Complete | 2026-04-02 |
-| 3. Platform Compatibility Layer | 2/2 | Complete | 2026-04-02 |
+| 3. Platform Compatibility Layer | 2/2 + UAT | Human verification pending | - |
 | 4. Advanced Menu Features | 0/2 | Not started | - |
 
 ---
-*Last updated: 2026-04-02 after Phase 3 completion*
+*Last updated: 2026-04-02 after Phase 3 human verification checkpoint*

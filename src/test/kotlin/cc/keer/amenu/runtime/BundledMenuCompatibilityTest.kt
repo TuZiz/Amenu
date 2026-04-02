@@ -4,6 +4,7 @@ import cc.keer.amenu.service.NavigationMode
 import cc.keer.amenu.support.MenuPluginTestHarness
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -43,5 +44,50 @@ class BundledMenuCompatibilityTest : MenuPluginTestHarness() {
 
         assertTrue(server.dispatchCommand(player, "skinmenu"))
         assertEquals("main", currentMenuId())
+    }
+
+    @Test
+    fun history_and_runtime_examples_keep_navigation_and_prompt_entrypoints_alive() {
+        assertTrue(server.dispatchCommand(player, "amenu open history"))
+        assertEquals("history", currentMenuId())
+
+        clickCurrent('R')
+        assertEquals("runtime", currentMenuId())
+
+        clickCurrent('P')
+        assertNull(currentMenuId())
+        assertEquals("Reusable prompt started.", nextPlainMessage())
+        assertEquals("Type cancel to abort.", nextPlainMessage())
+
+        assertTrue(server.dispatchCommand(player, "amenu"))
+        assertEquals("main", currentMenuId())
+
+        clickCurrent('H')
+        assertEquals("history", currentMenuId())
+
+        clickCurrent('X')
+        assertEquals("main", currentMenuId())
+    }
+
+    @Test
+    fun admin_example_preserves_permission_feedback_and_runtime_notes() {
+        plugin.menuService.openMenu(player, "admin", navigation = NavigationMode.ROOT)
+        assertEquals("admin", currentMenuId())
+
+        clickCurrent('L')
+        assertEquals("You need amenu.admin to reload menus.", nextPlainMessage())
+
+        plugin.menuService.openMenu(player, "admin", navigation = NavigationMode.ROOT)
+        clickCurrent('F')
+        assertEquals(
+            "Admin showcase: permission, deny-actions, back, refresh.",
+            nextPlainMessage(),
+        )
+
+        grantPermission("amenu.admin")
+        plugin.menuService.openMenu(player, "admin", navigation = NavigationMode.ROOT)
+        clickCurrent('L')
+        assertEquals("admin", currentMenuId())
+        assertEquals("[AMenu] AMenu 配置已重载。", nextConsoleMessage())
     }
 }

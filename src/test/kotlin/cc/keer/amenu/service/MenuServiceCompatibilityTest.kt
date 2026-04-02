@@ -48,7 +48,12 @@ class MenuServiceCompatibilityTest : MenuPluginTestHarness() {
 
     @Test
     fun open_default_menu_still_succeeds_after_scheduler_handoff() {
-        plugin.menuService.openDefaultMenu(player)
+        server.scheduler.runTaskAsynchronously(
+            plugin,
+            Runnable { plugin.menuService.openDefaultMenu(player) },
+        )
+        server.scheduler.waitAsyncTasksFinished()
+        advanceTicks(1L)
 
         assertEquals("main", currentMenuId())
     }
@@ -56,7 +61,12 @@ class MenuServiceCompatibilityTest : MenuPluginTestHarness() {
     @Test
     fun click_actions_continue_to_open_secondary_menus() {
         plugin.menuService.openDefaultMenu(player)
-        clickCurrent('N')
+        server.scheduler.runTaskAsynchronously(
+            plugin,
+            Runnable { plugin.menuService.handleClick(player, "main", slotOf("main", 'N')) },
+        )
+        server.scheduler.waitAsyncTasksFinished()
+        advanceTicks(1L)
 
         assertEquals("compat-next", currentMenuId())
     }

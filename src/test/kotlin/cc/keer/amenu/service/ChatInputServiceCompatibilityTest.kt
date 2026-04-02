@@ -2,6 +2,7 @@ package cc.keer.amenu.service
 
 import cc.keer.amenu.support.MenuPluginTestHarness
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -70,5 +71,48 @@ class ChatInputServiceCompatibilityTest : MenuPluginTestHarness() {
 
         submitChat("late")
         assertTrue(records.isEmpty())
+    }
+
+    @Test
+    fun prompt_replacement_keeps_only_the_latest_session_active() {
+        val records = mutableListOf<String>()
+        registerRecordingCommand("record-input", records)
+
+        plugin.chatInputService.startPrompt(player, "compat-runtime", "reusable", emptyMap())
+        assertEquals("Compat start", nextPlainMessage())
+
+        plugin.chatInputService.startPrompt(player, "compat-runtime", "reusable", emptyMap())
+        assertEquals("[AMenu] Prompt replaced.", nextPlainMessage())
+        assertEquals("Compat start", nextPlainMessage())
+
+        submitChat("latest")
+        assertEquals("Compat latest", nextPlainMessage())
+        assertEquals(listOf("Tester|record-input|latest"), records)
+    }
+
+    @Test
+    fun reload_and_shutdown_cancel_pending_prompt_tasks() {
+        val records = mutableListOf<String>()
+        registerRecordingCommand("record-input", records)
+
+        plugin.chatInputService.startPrompt(player, "compat-runtime", "reusable", emptyMap())
+        assertEquals("Compat start", nextPlainMessage())
+
+        plugin.reloadPlugin()
+        advanceTicks(5L * 20L)
+        submitChat("after-reload")
+
+        assertTrue(records.isEmpty())
+        assertNull(nextPlainMessage())
+
+        plugin.chatInputService.startPrompt(player, "compat-runtime", "reusable", emptyMap())
+        assertEquals("Compat start", nextPlainMessage())
+
+        plugin.onDisable()
+        advanceTicks(5L * 20L)
+        submitChat("after-shutdown")
+
+        assertTrue(records.isEmpty())
+        assertNull(nextPlainMessage())
     }
 }

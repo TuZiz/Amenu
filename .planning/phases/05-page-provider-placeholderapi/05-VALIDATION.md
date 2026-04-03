@@ -19,18 +19,18 @@ created: 2026-04-03
 |----------|-------|
 | **Framework** | JUnit Jupiter 6.0.3 + MockBukkit 4.108.0 |
 | **Config file** | none - Maven Surefire + Kotlin Maven plugin in `pom.xml` |
-| **Quick run command** | `set JAVA_HOME=D:\codex\Amenu\.tools\jdk21 && set PATH=%JAVA_HOME%\bin;%PATH% && mvn -q -Dtest=MenuRepositoryDslTest,MenuRuntimeActionTest,MenuServiceCompatibilityTest test` |
+| **Quick run command** | `set JAVA_HOME=D:\codex\Amenu\.tools\jdk21 && set PATH=%JAVA_HOME%\bin;%PATH% && mvn -q -Dtest=MenuRepositoryDslTest test` |
 | **Full suite command** | `set JAVA_HOME=D:\codex\Amenu\.tools\jdk21 && set PATH=%JAVA_HOME%\bin;%PATH% && mvn test` |
-| **Estimated runtime** | ~45 seconds |
+| **Estimated runtime** | ~20-30 seconds for routine task-level checks; ~45 seconds full wave sweep |
 
 ---
 
 ## Sampling Rate
 
-- **After every task commit:** Run `set JAVA_HOME=D:\codex\Amenu\.tools\jdk21 && set PATH=%JAVA_HOME%\bin;%PATH% && mvn -q -Dtest=MenuRepositoryDslTest,MenuRuntimeActionTest,MenuServiceCompatibilityTest test`
+- **After every task commit:** Run the exact task-level command from the verification map below instead of the umbrella suite; target routine feedback under 30 seconds.
 - **After every plan wave:** Run `set JAVA_HOME=D:\codex\Amenu\.tools\jdk21 && set PATH=%JAVA_HOME%\bin;%PATH% && mvn test`
 - **Before `$gsd-verify-work`:** Full suite must be green
-- **Max feedback latency:** 60 seconds
+- **Max feedback latency:** 30 seconds for task-level checks, 60 seconds for wave-level sweeps
 
 ---
 

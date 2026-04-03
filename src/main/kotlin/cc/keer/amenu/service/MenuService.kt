@@ -4,16 +4,20 @@ import cc.keer.amenu.AMenuPlugin
 import cc.keer.amenu.PluginSettings
 import cc.keer.amenu.config.ButtonDefinition
 import cc.keer.amenu.config.IconDefinition
-import cc.keer.amenu.config.MenuCondition
 import cc.keer.amenu.config.MenuAction
+import cc.keer.amenu.config.MenuCondition
 import cc.keer.amenu.config.MenuDefinition
+import cc.keer.amenu.config.MenuRepository
 import cc.keer.amenu.config.PageEntryDefinition
 import cc.keer.amenu.config.PageOperation
 import cc.keer.amenu.config.PageRegionDefinition
-import cc.keer.amenu.config.MenuRepository
 import cc.keer.amenu.config.SoundSpec
 import cc.keer.amenu.gui.MenuHolder
 import cc.keer.amenu.platform.PlatformScheduler
+import cc.keer.amenu.service.provider.MenuProviderRegistry
+import cc.keer.amenu.service.provider.ProviderCache
+import cc.keer.amenu.service.provider.ProviderRequest
+import cc.keer.amenu.service.provider.ProviderResult
 import cc.keer.amenu.util.AdventureAccess
 import cc.keer.amenu.util.InventoryAccess
 import cc.keer.amenu.util.ItemFactory
@@ -35,6 +39,8 @@ class MenuService(
     val repository: MenuRepository,
     private val platformScheduler: PlatformScheduler,
     val placeholderPipeline: PlaceholderPipeline = PlaceholderPipeline(BukkitPlaceholderApiBridge(plugin)),
+    private val providerRegistry: MenuProviderRegistry = MenuProviderRegistry.createBuiltins(platformScheduler),
+    private val providerCache: ProviderCache = ProviderCache(),
 ) {
 
     private lateinit var chatInputService: ChatInputService
@@ -48,6 +54,7 @@ class MenuService(
     fun reload(newSettings: PluginSettings) {
         settings = newSettings
         menuStates.clear()
+        providerCache.clear()
     }
 
     fun openDefaultMenu(player: Player) {
@@ -166,6 +173,7 @@ class MenuService(
         renderMenu(player, menu, inventory, state)
 
         player.openInventory(inventory)
+        renderOpenMenuIfCurrent(player, menu.id)
     }
 
     private fun handleClickInternal(player: Player, menuId: String, slot: Int) {
@@ -234,7 +242,8 @@ class MenuService(
         val state = stateFor(player, menu.id)
         val regionId = resolvePageRegionId(menu, action.regionId) ?: return
         val region = menu.pageRegions[regionId] ?: return
-        val regionState = state.regions.getOrPut(regionId) { initialRegionState(region) }
+        val regionState = state.regions.getOrPut(regionId) { initialRegionState() }
+        synchronizeRegionState(player, menu.id, state, region, regionState)
         val slotCount = menu.pageSlots(regionId).size.coerceAtLeast(1)
         val pageTotal = pageCount(regionState.entriesFor(region), slotCount)
 
@@ -244,8 +253,10 @@ class MenuService(
             PageOperation.FIRST -> regionState.page = 0
             PageOperation.LAST -> regionState.page = pageTotal - 1
             PageOperation.REFRESH -> {
-                resetRegionState(regionState, region)
+                invalidateRegion(player, menu.id, region)
+                resetRegionState(state, regionState, region)
                 regionState.page = 0
+                synchronizeRegionState(player, menu.id, state, region, regionState)
             }
         }
 
@@ -279,7 +290,11 @@ class MenuService(
     }
 
     private fun mergedPlaceholders(player: Player, state: MenuViewState?): Map<String, String> {
-        return defaultPlaceholders(player) + (state?.placeholders ?: emptyMap())
+        val dynamic = state?.surfacePlaceholders
+            ?.values
+            ?.fold(emptyMap<String, String>()) { current, next -> current + next }
+            ?: emptyMap()
+        return defaultPlaceholders(player) + (state?.placeholders ?: emptyMap()) + dynamic
     }
 
     private fun resolveButton(
@@ -324,6 +339,7 @@ class MenuService(
         inventory: Inventory,
         state: MenuViewState,
     ) {
+        prepareDynamicSurfaces(player, menu, state)
         for (slot in 0 until menu.size) {
             inventory.setItem(slot, resolveItem(player, menu, slot, state))
         }
@@ -345,12 +361,15 @@ class MenuService(
         }
 
         val region = menu.pageRegionAt(slot) ?: return null
+        val regionState = state.regions.getOrPut(region.id) { initialRegionState() }
+        synchronizeRegionState(player, menu.id, state, region, regionState)
         val resolved = resolvePageEntry(player, state, menu, region, slot)
         return when {
             resolved != null -> ItemFactory.create(renderIcon(player, resolved.entry.icon, resolved.placeholders), emptyMap())
-            state.regions.getOrPut(region.id) { initialRegionState(region) }.status != RegionLoadStatus.READY ->
+            regionState.status == RegionLoadStatus.LOADING || regionState.status == RegionLoadStatus.NOT_LOADED ->
                 ItemFactory.create(renderIcon(player, region.loadingIcon, mergedPlaceholders(player, state)), emptyMap())
-
+            regionState.status == RegionLoadStatus.ERROR && region.errorIcon != null ->
+                ItemFactory.create(renderIcon(player, region.errorIcon, mergedPlaceholders(player, state)), emptyMap())
             else -> ItemFactory.create(renderIcon(player, region.emptyIcon, mergedPlaceholders(player, state)), emptyMap())
         }
     }
@@ -362,10 +381,8 @@ class MenuService(
         region: PageRegionDefinition,
         slot: Int,
     ): ResolvedPageEntry? {
-        val regionState = state.regions.getOrPut(region.id) { initialRegionState(region) }
-        if (regionState.status == RegionLoadStatus.NOT_LOADED) {
-            triggerAsyncLoad(state.ownerId, menu.id, region, regionState)
-        }
+        val regionState = state.regions.getOrPut(region.id) { initialRegionState() }
+        synchronizeRegionState(player, menu.id, state, region, regionState)
         if (regionState.status != RegionLoadStatus.READY) {
             return null
         }
@@ -397,7 +414,7 @@ class MenuService(
         val entry = entries[globalIndex]
         val placeholders = mergedPlaceholdersForEntry(
             player = player,
-            base = state.placeholders,
+            base = mergedPlaceholders(player, state),
             region = region,
             entry = entry,
             globalIndex = globalIndex,
@@ -434,40 +451,6 @@ class MenuService(
             )
     }
 
-    private fun triggerAsyncLoad(
-        ownerId: UUID,
-        menuId: String,
-        region: PageRegionDefinition,
-        regionState: RegionViewState,
-    ) {
-        if (region.asyncDelayTicks <= 0L) {
-            regionState.status = RegionLoadStatus.READY
-            regionState.entries = region.entries
-            return
-        }
-        if (regionState.status == RegionLoadStatus.LOADING) {
-            return
-        }
-        regionState.status = RegionLoadStatus.LOADING
-        val requestId = regionState.nextRequest()
-        regionState.pendingTask?.cancel()
-        val player = plugin.server.getPlayer(ownerId) ?: return
-        regionState.pendingTask = platformScheduler.runLaterFor(player, region.asyncDelayTicks, Runnable {
-            if (regionState.requestId != requestId) {
-                return@Runnable
-            }
-            regionState.pendingTask = null
-            regionState.entries = region.entries
-            regionState.status = RegionLoadStatus.READY
-            renderMenuForActiveView(ownerId, menuId)
-        })
-    }
-
-    private fun renderMenuForActiveView(playerId: UUID, menuId: String) {
-        val player = plugin.server.getPlayer(playerId) ?: return
-        renderOpenMenuIfCurrent(player, menuId)
-    }
-
     private fun renderOpenMenuIfCurrent(player: Player, menuId: String) {
         val holder = player.openInventory.topInventory.holder as? MenuHolder ?: return
         if (holder.menuId != menuId) {
@@ -492,19 +475,18 @@ class MenuService(
             .getOrPut(menuId) { MenuViewState(player.uniqueId, menuId) }
     }
 
-    private fun initialRegionState(region: PageRegionDefinition): RegionViewState {
-        return if (region.asyncDelayTicks > 0L) {
-            RegionViewState()
-        } else {
-            RegionViewState(status = RegionLoadStatus.READY, entries = region.entries.toList())
-        }
+    private fun initialRegionState(): RegionViewState {
+        return RegionViewState()
     }
 
-    private fun resetRegionState(state: RegionViewState, region: PageRegionDefinition) {
-        state.pendingTask?.cancel()
-        state.pendingTask = null
-        state.entries = if (region.asyncDelayTicks > 0L) emptyList() else region.entries.toList()
-        state.status = if (region.asyncDelayTicks > 0L) RegionLoadStatus.NOT_LOADED else RegionLoadStatus.READY
+    private fun resetRegionState(
+        menuState: MenuViewState,
+        state: RegionViewState,
+        region: PageRegionDefinition,
+    ) {
+        menuState.surfacePlaceholders.remove(region.id)
+        state.entries = emptyList()
+        state.status = RegionLoadStatus.NOT_LOADED
     }
 
     private fun pageCount(entries: List<PageEntryDefinition>, pageSize: Int): Int {
@@ -533,6 +515,157 @@ class MenuService(
             lore = placeholderPipeline.renderAll(player, icon.lore, placeholders),
         )
     }
+
+    private fun prepareDynamicSurfaces(
+        player: Player,
+        menu: MenuDefinition,
+        state: MenuViewState,
+    ) {
+        menu.pageRegions.values.forEach { region ->
+            val regionState = state.regions.getOrPut(region.id) { initialRegionState() }
+            synchronizeRegionState(player, menu.id, state, region, regionState)
+        }
+    }
+
+    private fun synchronizeRegionState(
+        player: Player,
+        menuId: String,
+        state: MenuViewState,
+        region: PageRegionDefinition,
+        regionState: RegionViewState,
+    ) {
+        val providerType = providerTypeFor(region) ?: run {
+            regionState.entries = region.entries
+            regionState.status = if (region.entries.isEmpty()) RegionLoadStatus.EMPTY else RegionLoadStatus.READY
+            return
+        }
+        val key = providerKey(player.uniqueId, menuId, region, providerType)
+        var snapshot = providerCache.read(key)
+        val needsReload = snapshot.current == null || snapshot.expired
+        if (needsReload && !snapshot.loading) {
+            triggerProviderLoad(player, menuId, region, providerType, key, mergedPlaceholders(player, state))
+            snapshot = providerCache.read(key)
+        }
+        applyRegionSnapshot(state, region, regionState, snapshot)
+    }
+
+    private fun triggerProviderLoad(
+        player: Player,
+        menuId: String,
+        region: PageRegionDefinition,
+        providerType: String,
+        key: ProviderCache.Key,
+        placeholders: Map<String, String>,
+    ) {
+        val provider = providerRegistry.provider(providerType) ?: run {
+            providerCache.complete(
+                key = key,
+                requestToken = providerCache.beginLoad(key),
+                result = ProviderResult.Error("Unknown provider $providerType"),
+                ttlTicks = null,
+            )
+            return
+        }
+        val requestToken = providerCache.beginLoad(key)
+        val request = ProviderRequest(
+            viewerId = player.uniqueId,
+            viewerName = player.name,
+            menuId = menuId,
+            surfaceId = region.id,
+            providerType = providerType,
+            resolvedParams = region.provider?.params
+                ?.mapValues { (_, value) -> placeholderPipeline.render(player, value, placeholders) }
+                ?: emptyMap(),
+            placeholders = placeholders,
+            region = region,
+        )
+        provider.load(request).whenComplete { result, throwable ->
+            val resolved = when {
+                throwable != null -> ProviderResult.Error(throwable.message)
+                result != null -> result
+                else -> ProviderResult.Empty
+            }
+            providerCache.complete(
+                key = key,
+                requestToken = requestToken,
+                result = resolved,
+                ttlTicks = ttlFor(region, resolved),
+            )
+            val livePlayer = plugin.server.getPlayer(player.uniqueId) ?: return@whenComplete
+            platformScheduler.executeFor(livePlayer, Runnable {
+                val menu = repository.menu(menuId) ?: return@Runnable
+                val activeState = stateFor(livePlayer, menu.id)
+                val activeRegion = menu.pageRegions[region.id] ?: return@Runnable
+                val activeRegionState = activeState.regions.getOrPut(activeRegion.id) { initialRegionState() }
+                synchronizeRegionState(livePlayer, menu.id, activeState, activeRegion, activeRegionState)
+                renderOpenMenuIfCurrent(livePlayer, menu.id)
+            })
+        }
+    }
+
+    private fun applyRegionSnapshot(
+        state: MenuViewState,
+        region: PageRegionDefinition,
+        regionState: RegionViewState,
+        snapshot: ProviderCache.Snapshot,
+    ) {
+        val visibleSuccess = when {
+            snapshot.current is ProviderResult.Success && !snapshot.expired -> snapshot.current
+            snapshot.lastGood != null -> snapshot.lastGood
+            else -> null
+        }
+
+        if (visibleSuccess != null) {
+            regionState.entries = visibleSuccess.entries
+            state.surfacePlaceholders[region.id] = visibleSuccess.placeholders
+            regionState.status = RegionLoadStatus.READY
+            return
+        }
+
+        state.surfacePlaceholders.remove(region.id)
+        regionState.entries = emptyList()
+        regionState.status = when {
+            snapshot.loading -> RegionLoadStatus.LOADING
+            snapshot.current is ProviderResult.Empty -> RegionLoadStatus.EMPTY
+            snapshot.current is ProviderResult.Error -> RegionLoadStatus.ERROR
+            else -> RegionLoadStatus.NOT_LOADED
+        }
+    }
+
+    private fun providerTypeFor(region: PageRegionDefinition): String? {
+        return region.provider?.type
+            ?: if (region.entries.isNotEmpty() || region.asyncDelayTicks > 0L) "entries" else null
+    }
+
+    private fun providerKey(
+        viewerId: UUID,
+        menuId: String,
+        region: PageRegionDefinition,
+        providerType: String,
+    ): ProviderCache.Key {
+        return ProviderCache.Key(
+            viewerId = viewerId,
+            menuId = menuId,
+            surfaceId = region.id,
+            providerType = providerType,
+        )
+    }
+
+    private fun invalidateRegion(
+        player: Player,
+        menuId: String,
+        region: PageRegionDefinition,
+    ) {
+        val providerType = providerTypeFor(region) ?: return
+        providerCache.invalidate(providerKey(player.uniqueId, menuId, region, providerType))
+    }
+
+    private fun ttlFor(
+        region: PageRegionDefinition,
+        result: ProviderResult,
+    ): Long? {
+        return (result as? ProviderResult.Success)?.ttlTicks ?: region.provider?.cache?.ttl
+    }
 }
 
 enum class NavigationMode {
@@ -545,6 +678,7 @@ private data class MenuViewState(
     val ownerId: UUID,
     val menuId: String,
     val placeholders: MutableMap<String, String> = linkedMapOf(),
+    val surfacePlaceholders: MutableMap<String, Map<String, String>> = linkedMapOf(),
     val regions: MutableMap<String, RegionViewState> = linkedMapOf(),
 )
 
@@ -552,14 +686,7 @@ private data class RegionViewState(
     var page: Int = 0,
     var status: RegionLoadStatus = RegionLoadStatus.NOT_LOADED,
     var entries: List<PageEntryDefinition> = emptyList(),
-    var requestId: Int = 0,
-    var pendingTask: cc.keer.amenu.platform.TaskHandle? = null,
 ) {
-    fun nextRequest(): Int {
-        requestId += 1
-        return requestId
-    }
-
     fun entriesFor(region: PageRegionDefinition): List<PageEntryDefinition> {
         return if (entries.isEmpty() && status == RegionLoadStatus.READY) region.entries else entries
     }
@@ -569,6 +696,8 @@ private enum class RegionLoadStatus {
     NOT_LOADED,
     LOADING,
     READY,
+    EMPTY,
+    ERROR,
 }
 
 private data class ResolvedPageEntry(
@@ -577,7 +706,7 @@ private data class ResolvedPageEntry(
 )
 
 private data class ResolvedButtonDefinition(
-    val icon: cc.keer.amenu.config.IconDefinition,
+    val icon: IconDefinition,
     val actions: List<MenuAction>,
     val permission: String?,
     val visiblePermission: String?,

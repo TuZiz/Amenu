@@ -4,15 +4,15 @@ main: cc.keer.amenu.AMenuPlugin
 api-version: "1.20"
 folia-supported: true
 author: Keer
-description: A general, low-config Minecraft menu plugin for Spigot, Paper, and Folia-aware execution.
-
+description: 一个更现代、低配置的 Minecraft 菜单插件，兼容 Spigot、Paper 与 Folia。
+softdepend: [PlaceholderAPI]
 commands:
   amenu:
-    description: Open or manage AMenu.
-    usage: /amenu [reload|open <menuId>]
-    aliases: [skinmenu]
+    description: 打开或管理 AMenu。
+    usage: /amenu [reload|open <menuId>|give <bindingId>|sync-bundled]
+    aliases: [skinmenu, menu]
 
 permissions:
   amenu.admin:
-    description: Reload AMenu and manage advanced operations.
+    description: 重载 AMenu 并执行高级管理操作。
     default: op

@@ -38,11 +38,11 @@
 
 ## v3 Requirements
 
-- **P5-01**: Menus can resolve page regions through registered providers with viewer/menu/surface-scoped cache keys, TTL caching, and explicit invalidation on refresh.
+- [x] **P5-01**: Menus can resolve page regions through registered providers with viewer/menu/surface-scoped cache keys, TTL caching, and explicit invalidation on refresh.
 - [x] **P5-02**: One shared placeholder pipeline resolves internal `{placeholder}` values across titles, lore, actions, provider params, bindings, and button-state evaluation, while `%placeholder%` resolution remains an optional PlaceholderAPI bridge.
 - **P5-03**: Buttons can reevaluate state on a configured interval without reopening the menu, and refresh tasks clean up on menu close, reload, quit, and menu replacement.
 - [x] **P5-04**: The DSL parses provider, cache, loading/empty/error, and update metadata without breaking existing static menus or requiring provider opt-in.
-- **P5-05**: Async provider execution returns through the platform-safe runtime path before inventory mutation or visible rerender on Bukkit/Paper/Folia.
+- [x] **P5-05**: Async provider execution returns through the platform-safe runtime path before inventory mutation or visible rerender on Bukkit/Paper/Folia.
 - **P5-06**: Missing PlaceholderAPI, empty provider results, provider errors, and cache-expired reloads degrade safely through explicit fallback states, with a documented PlaceholderAPI-enabled smoke path.
 
 ## Out of Scope
@@ -73,11 +73,11 @@
 | ADV-01 | Phase 4 | Complete |
 | ADV-02 | Phase 4 | Complete |
 | ADV-03 | Phase 4 | Complete |
-| P5-01 | Phase 5 | Planned |
+| P5-01 | Phase 5 | Complete |
 | P5-02 | Phase 5 | Complete |
 | P5-03 | Phase 5 | Planned |
 | P5-04 | Phase 5 | Complete |
-| P5-05 | Phase 5 | Planned |
+| P5-05 | Phase 5 | Complete |
 | P5-06 | Phase 5 | Planned |
 
 ---

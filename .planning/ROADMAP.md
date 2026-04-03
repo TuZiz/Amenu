@@ -68,7 +68,7 @@ Plans:
 
 Plans:
 - [x] 05-01-PLAN.md - Shared placeholder pipeline and dynamic DSL contracts
-- [ ] 05-02-PLAN.md - Provider registry, cache facade, and safe provider-backed page runtime
+- [x] 05-02-PLAN.md - Provider registry, cache facade, and safe provider-backed page runtime
 - [ ] 05-03-PLAN.md - Timed button reevaluation, bundled dynamic showcase, and PlaceholderAPI smoke gate
 
 ## Progress
@@ -79,7 +79,7 @@ Plans:
 | 2. Runtime Interaction Layer | 2/2 | Complete | 2026-04-02 |
 | 3. Platform Compatibility Layer | 2/2 + UAT | Human verification pending | - |
 | 4. Advanced Menu Features | 2/2 | Complete | 2026-04-02 |
-| 5. Dynamic Data And Placeholder Pipeline | 1/3 | In Progress | - |
+| 5. Dynamic Data And Placeholder Pipeline | 2/3 | In Progress | - |
 
 ---
-*Last updated: 2026-04-03 after Phase 5 plan 01 execution*
+*Last updated: 2026-04-03 after Phase 5 plan 02 execution*

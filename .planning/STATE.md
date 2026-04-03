@@ -3,12 +3,12 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: Executing Phase 05
-last_updated: "2026-04-03T17:28:45Z"
+last_updated: "2026-04-03T09:56:56.358Z"
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 11
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # STATE
@@ -37,24 +37,25 @@ See: `.planning/PROJECT.md`
 - Phase 4 wave 2 is now implemented: menus can declare reusable conditions, button states, and item-triggered bindings with contextual placeholders
 - Phase 5 context is now captured for registered providers, PlaceholderAPI bridging, cache-aware refresh behavior, and stateful button rendering
 - Phase 5 plan 01 is now implemented: provider/cache/update DSL metadata and one shared placeholder pipeline are in place, with PlaceholderAPI kept optional and non-fatal
+- Phase 5 plan 02 is now implemented: page regions render through a registered provider runtime with viewer/menu/surface cache scoping, stale-last-good fallback, and scheduler-safe rerender
 
 ## Current Position
 
 Phase: 05 (page-provider-placeholderapi) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 - Completed: Phase 1 - Menu DSL Foundation
 - Completed: Phase 2 - Runtime Interaction Layer
 - In verification: Phase 3 - Platform Compatibility Layer
 - Implemented: Phase 4 - Advanced Menu Features
 - In progress: Phase 5 - Dynamic data and placeholder pipeline
-- Next logical steps: execute the provider runtime and refresh plans while preserving the outstanding Phase 3 live UAT boundary
+- Next logical steps: execute the timed reevaluation and PlaceholderAPI smoke plan while preserving the outstanding Phase 3 live UAT boundary
 
 ## Next
 
-1. Execute `05-02-PLAN.md` to add the provider registry, cache facade, and safe provider-backed page runtime on top of the new parser contract
+1. Execute `05-03-PLAN.md` to add timed button reevaluation, cleanup, and PlaceholderAPI-enabled smoke verification on top of the provider runtime
 2. Preserve the outstanding Phase 3 live UAT boundary until one real `/amenu` Paper or Folia interaction pass is complete
-3. Follow with `05-03-PLAN.md` for timed button reevaluation and PlaceholderAPI-enabled smoke verification
+3. Close Phase 5 only after the timed refresh lifecycle and optional PlaceholderAPI smoke path are both documented and verified
 
 ## Decisions
 
@@ -69,6 +70,9 @@ Plan: 2 of 3
 - [Phase 05]: Keep MenuRepository as the single parser seam for provider/cache/update/loading-empty-error metadata.
 - [Phase 05]: Resolve AMenu {..} placeholders before delegating %..% to PlaceholderAPI so internal placeholders stay canonical.
 - [Phase 05]: Evaluate button-state conditions and rendered text through the same PlaceholderPipeline used by actions and bindings.
+- [Phase 05-page-provider-placeholderapi]: Use a central ProviderCache keyed by viewerId + menuId + surfaceId + providerType so refresh can invalidate one surface without cross-player leakage.
+- [Phase 05-page-provider-placeholderapi]: Register built-in entries and placeholder-state providers, with legacy-static aliases routed through entries to preserve Phase 4 page behavior.
+- [Phase 05-page-provider-placeholderapi]: Pre-sync dynamic page surfaces before slot rendering so provider-backed placeholders can drive button state selection in the same render pass.
 
 ## Issues
 
@@ -85,8 +89,8 @@ Plan: 2 of 3
 
 ## Session
 
-- Last completed plan: `05-01-PLAN.md`
-- Stopped at: Completed 05-01-PLAN.md
+- Last completed plan: `05-02-PLAN.md`
+- Stopped at: Completed 05-02-PLAN.md
 
 ---
-*Last updated: 2026-04-03 after Phase 5 plan 01 execution*
+*Last updated: 2026-04-03 after Phase 5 plan 02 execution*

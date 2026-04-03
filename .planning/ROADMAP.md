@@ -64,10 +64,10 @@ Plans:
 **Goal**: Let menus resolve dynamic page entries and placeholders through pluggable providers, with explicit cache and refresh behavior that stays safe across Bukkit/Paper/Folia runtimes.  
 **Depends on**: Phase 4  
 **Requirements**: P5-01, P5-02, P5-03, P5-04, P5-05, P5-06  
-**Status**: Planned (2026-04-03)
+**Status**: In Progress (2026-04-03)
 
 Plans:
-- [ ] 05-01-PLAN.md - Shared placeholder pipeline and dynamic DSL contracts
+- [x] 05-01-PLAN.md - Shared placeholder pipeline and dynamic DSL contracts
 - [ ] 05-02-PLAN.md - Provider registry, cache facade, and safe provider-backed page runtime
 - [ ] 05-03-PLAN.md - Timed button reevaluation, bundled dynamic showcase, and PlaceholderAPI smoke gate
 
@@ -79,7 +79,7 @@ Plans:
 | 2. Runtime Interaction Layer | 2/2 | Complete | 2026-04-02 |
 | 3. Platform Compatibility Layer | 2/2 + UAT | Human verification pending | - |
 | 4. Advanced Menu Features | 2/2 | Complete | 2026-04-02 |
-| 5. Dynamic Data And Placeholder Pipeline | 0/3 | Planned | - |
+| 5. Dynamic Data And Placeholder Pipeline | 1/3 | In Progress | - |
 
 ---
-*Last updated: 2026-04-03 after Phase 5 planning*
+*Last updated: 2026-04-03 after Phase 5 plan 01 execution*

@@ -2,7 +2,7 @@
 phase: 05
 slug: page-provider-placeholderapi
 status: draft
-nyquist_compliant: false
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-04-03
 ---
@@ -40,10 +40,10 @@ created: 2026-04-03
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
 | 05-01-01 | 01 | 1 | P5-04 | unit | `mvn -q -Dtest=MenuRepositoryDslTest test` | Yes | pending |
 | 05-01-02 | 01 | 1 | P5-02 | unit | `mvn -q -Dtest=PlaceholderPipelineTest test` | No - W0 | pending |
-| 05-02-01 | 02 | 1 | P5-01 | unit/service | `mvn -q -Dtest=MenuDynamicProviderServiceTest test` | No - W0 | pending |
-| 05-02-02 | 02 | 1 | P5-05 | compatibility/service | `mvn -q -Dtest=MenuServiceCompatibilityTest test` | Yes | pending |
-| 05-03-01 | 03 | 2 | P5-03 | service | `mvn -q -Dtest=MenuDynamicRefreshTest test` | No - W0 | pending |
-| 05-03-02 | 03 | 2 | P5-06 | manual smoke | `manual-only` | No | pending |
+| 05-02-01 | 02 | 2 | P5-01 | unit/service | `mvn -q -Dtest=MenuDynamicProviderServiceTest test` | No - W0 | pending |
+| 05-02-02 | 02 | 2 | P5-05 | compatibility/service | `mvn -q -Dtest=MenuServiceCompatibilityTest test` | Yes | pending |
+| 05-03-01 | 03 | 3 | P5-03 | service | `mvn -q -Dtest=MenuDynamicRefreshTest test` | No - W0 | pending |
+| 05-03-02 | 03 | 3 | P5-06 | manual smoke | `manual-only` | No | pending |
 
 *Status: pending -> green -> red -> flaky*
 

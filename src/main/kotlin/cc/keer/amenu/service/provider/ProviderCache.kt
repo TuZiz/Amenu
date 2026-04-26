@@ -66,11 +66,17 @@ class ProviderCache(
         entry.expiresAtTick = ttlTicks?.let { tickProvider() + it }
     }
 
-    fun invalidate(key: Key) {
+    fun invalidate(
+        key: Key,
+        dropLastGood: Boolean = false,
+    ) {
         val entry = cache.getIfPresent(key) ?: return
         entry.current = null
         entry.expiresAtTick = null
         entry.loading = false
+        if (dropLastGood) {
+            entry.lastGood = null
+        }
     }
 
     fun clear() {

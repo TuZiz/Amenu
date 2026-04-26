@@ -89,6 +89,35 @@ class PlaceholderPipelineTest : MenuPluginTestHarness() {
         assertEquals(listOf("Viewer Tester"), plainLore(external))
     }
 
+    @Test
+    fun opening_a_menu_only_renders_placeholder_text_once_per_surface() {
+        writeMenu(
+            "single-pass-open",
+            """
+            title: "%player_name%"
+            layout:
+              - "A        "
+            buttons:
+              "A":
+                material: PAPER
+                name: "%player_name%"
+            """.trimIndent(),
+        )
+
+        val bridge = CountingPlaceholderApiBridge()
+        val service = MenuService(
+            plugin = plugin,
+            settings = plugin.settings,
+            repository = plugin.menuRepository,
+            platformScheduler = plugin.platformScheduler,
+            placeholderPipeline = PlaceholderPipeline(bridge),
+        )
+
+        service.openMenu(player, "single-pass-open", navigation = NavigationMode.ROOT)
+
+        assertEquals(2, bridge.renderCalls)
+    }
+
     private fun plainName(item: ItemStack): String? {
         val meta = item.itemMeta ?: return null
         val componentGetter = meta.javaClass.methods.firstOrNull { it.name == "displayName" && it.parameterCount == 0 }
@@ -112,6 +141,17 @@ class PlaceholderPipelineTest : MenuPluginTestHarness() {
             if (!enabled) {
                 return text
             }
+            return text.replace("%player_name%", player.name)
+        }
+    }
+
+    private class CountingPlaceholderApiBridge : PlaceholderApiBridge {
+        var renderCalls: Int = 0
+
+        override fun isAvailable(): Boolean = true
+
+        override fun render(player: Player, text: String): String {
+            renderCalls++
             return text.replace("%player_name%", player.name)
         }
     }

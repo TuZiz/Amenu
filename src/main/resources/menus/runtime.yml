@@ -1,0 +1,52 @@
+Title: "<gradient:#58A6FF:#7EE787><bold>AMenu 输入实验室</bold></gradient>"
+
+Shape:
+  - "#########"
+  - "#`聊天输入`###`分页实验室`#"
+  - "#########"
+
+Fill:
+  display:
+    material: LIGHT_BLUE_STAINED_GLASS_PANE
+    name: " "
+
+BUTTONS:
+  "聊天输入":
+    display:
+      material: WRITABLE_BOOK
+      name: "<aqua><bold>聊天输入</bold></aqua>"
+      lore:
+        - "<gray>当前仅保留这一种稳定输入方式。</gray>"
+        - "<gray>15 秒内必须输入 <white>确认</white> 才会通过。</gray>"
+    actions:
+      all:
+        - "close"
+    input:
+      type: CHAT
+      timeout-seconds: 15
+      start:
+        - "<yellow>聊天输入已开始，请输入 <white>确认</white>。</yellow>"
+        - "<gray>输入其他内容、<white>cancel</white> 或超时都会取消。</gray>"
+      validation:
+        equals: "确认"
+        ignore-case: true
+      invalid:
+        - "message: <red>聊天输入未通过校验，必须输入 <white>确认</white>。</red>"
+        - "menu: runtime"
+      cancel:
+        - "message: <yellow>已取消聊天输入。</yellow>"
+        - "menu: runtime"
+      submit:
+        - "message: <green>聊天输入校验通过：<white>{input}</white></green>"
+        - "menu: runtime"
+
+  "分页实验室":
+    display:
+      material: BOOKSHELF
+      name: "<green><bold>分页实验室</bold></green>"
+      lore:
+        - "<gray>跳转到分页展示与异步卡片演示。</gray>"
+        - "<dark_gray>用于测试现代菜单而非输入捕获。</dark_gray>"
+    actions:
+      all:
+        - "menu: history"

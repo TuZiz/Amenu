@@ -13,29 +13,79 @@ class MenuRepository(
 ) {
 
     private val menus = linkedMapOf<String, MenuDefinition>()
+    private val menuLookup = linkedMapOf<String, MenuDefinition>()
 
-    fun loadMenus() {
-        menus.clear()
+    fun loadMenus(): MenuLoadReport {
+        val parsedMenus = linkedMapOf<String, MenuDefinition>()
+        val errors = mutableListOf<MenuLoadError>()
         val menuFolder = File(plugin.dataFolder, "menus")
         if (!menuFolder.exists()) {
             menuFolder.mkdirs()
         }
 
-        menuFolder.listFiles { file -> file.isFile && file.extension.equals("yml", ignoreCase = true) }
-            ?.sortedBy { it.name.lowercase(Locale.ROOT) }
-            ?.forEach(::loadMenuFile)
+        val menuFiles = menuFolder.walkTopDown()
+            .filter { file -> file.isFile && file.extension.equals("yml", ignoreCase = true) }
+            .sortedBy { file -> relativeMenuPath(menuFolder, file).lowercase(Locale.ROOT) }
+            .toList()
+            .orEmpty()
+
+        menuFiles.forEach { file ->
+            loadMenuFile(menuFolder, file, parsedMenus, errors)
+        }
+
+        val lookup = buildLookupTable(parsedMenus)
+
+        val applied = when {
+            errors.isEmpty() -> {
+                menus.clear()
+                menus.putAll(parsedMenus)
+                menuLookup.clear()
+                menuLookup.putAll(lookup)
+                true
+            }
+
+            menus.isEmpty() -> {
+                menus.clear()
+                menus.putAll(parsedMenus)
+                menuLookup.clear()
+                menuLookup.putAll(lookup)
+                true
+            }
+
+            else -> false
+        }
+
+        return MenuLoadReport(
+            scannedFiles = menuFiles.size,
+            loadedMenus = parsedMenus.size,
+            applied = applied,
+            errors = errors.toList(),
+        )
     }
 
-    fun menu(menuId: String): MenuDefinition? = menus[menuId.lowercase(Locale.ROOT)]
+    fun menu(menuId: String): MenuDefinition? = menuLookup[normalizeMenuId(menuId)]
 
     fun listMenuIds(): List<String> = menus.keys.toList()
 
+    fun listResolvableMenuIds(): List<String> {
+        return menuLookup.keys
+            .filterNot { it.contains('/') }
+            .sortedWith(compareBy<String>({ it.length }, { it }))
+    }
+
     fun listBindings(): List<MenuBindingDefinition> = menus.values.flatMap(MenuDefinition::bindings)
 
-    private fun loadMenuFile(file: File) {
+    private fun loadMenuFile(
+        menuFolder: File,
+        file: File,
+        parsedMenus: MutableMap<String, MenuDefinition>,
+        errors: MutableList<MenuLoadError>,
+    ) {
         runCatching {
             val yaml = YamlConfiguration.loadConfiguration(file)
-            val id = file.nameWithoutExtension.lowercase(Locale.ROOT)
+            val id = canonicalMenuId(menuFolder, file)
+            require(id.isNotBlank()) { "Menu id resolved from ${relativeMenuPath(menuFolder, file)} must not be blank" }
+            require(id !in parsedMenus) { "Duplicate menu id '$id' from ${relativeMenuPath(menuFolder, file)}" }
             val parsedLayout = parseLayout(yaml)
             val templates = loadTemplates(section(yaml, "templates", "Templates"))
             val prompts = loadPrompts(section(yaml, "prompts", "Prompts")).toMutableMap()
@@ -60,10 +110,59 @@ class MenuRepository(
                 bindings = bindings,
             )
         }.onSuccess { definition ->
-            menus[definition.id] = definition
+            parsedMenus[definition.id] = definition
         }.onFailure { exception ->
-            plugin.logger.log(Level.SEVERE, "Failed to load menu file ${file.name}: ${exception.message}", exception)
+            errors += MenuLoadError(
+                fileName = relativeMenuPath(menuFolder, file),
+                message = exception.message ?: exception.javaClass.simpleName,
+            )
+            plugin.logger.log(Level.SEVERE, "Failed to load menu file ${relativeMenuPath(menuFolder, file)}: ${exception.message}", exception)
         }
+    }
+
+    private fun buildLookupTable(parsedMenus: Map<String, MenuDefinition>): Map<String, MenuDefinition> {
+        val lookup = linkedMapOf<String, MenuDefinition>()
+        parsedMenus.forEach { (id, definition) ->
+            lookup[id] = definition
+        }
+
+        val basenameGroups = parsedMenus.values.groupBy { definition ->
+            definition.id.substringAfterLast('/')
+        }
+
+        basenameGroups.forEach { (basename, definitions) ->
+            val preferred = definitions.sortedBy(MenuDefinition::id).first()
+            lookup.putIfAbsent(basename, preferred)
+            if (definitions.size > 1) {
+                plugin.logger.warning(
+                    "Menu basename alias '$basename' is ambiguous across ${definitions.map(MenuDefinition::id).sorted()}; defaulting '/$basename' to '${preferred.id}'.",
+                )
+            }
+        }
+
+        return lookup
+    }
+
+    private fun canonicalMenuId(
+        menuFolder: File,
+        file: File,
+    ): String {
+        return relativeMenuPath(menuFolder, file)
+            .removeSuffix(".${file.extension}")
+            .trim('/')
+            .replace('\\', '/')
+            .lowercase(Locale.ROOT)
+    }
+
+    private fun relativeMenuPath(
+        menuFolder: File,
+        file: File,
+    ): String {
+        return file.relativeTo(menuFolder).invariantSeparatorsPath
+    }
+
+    private fun normalizeMenuId(menuId: String): String {
+        return menuId.trim().replace('\\', '/').lowercase(Locale.ROOT)
     }
 
     private fun parseLayout(section: ConfigurationSection): ParsedLayout {
@@ -160,34 +259,40 @@ class MenuRepository(
         if (section == null) {
             return buildDefaultFill(fill)
         }
-        val buttons = section.getKeys(false).associate { key ->
-            val buttonSection = section.getConfigurationSection(key)
-                ?: error("Button section $key is invalid")
-            val symbol = resolveLayoutSymbol(key, shapeSymbols, "button")
-            val template = buttonSection.getString("template")?.let { templateId ->
-                templates[templateId] ?: error("Unknown template '$templateId' in button '$key'")
-            } ?: IconStyle()
-            val baseStyle = template.merged(parseIconStyle(buttonSection))
-            val icon = baseStyle.finalize()
-            val inlinePromptId = buttonSection.getConfigurationSection("input")?.let { inputSection ->
-                val promptId = "button-${normalizeTokenKey(key)}"
-                prompts[promptId] = parsePrompt(promptId, inputSection)
-                promptId
+        val buttons = buildMap {
+            section.getKeys(false).forEach { key ->
+                val buttonSection = section.getConfigurationSection(key)
+                    ?: error("Button section $key is invalid")
+                val symbol = resolveButtonSymbol(key, buttonSection, shapeSymbols) ?: return@forEach
+                val template = buttonSection.getString("template")?.let { templateId ->
+                    templates[templateId] ?: error("Unknown template '$templateId' in button '$key'")
+                } ?: IconStyle()
+                val baseStyle = template.merged(parseIconStyle(buttonSection))
+                val icon = baseStyle.finalize()
+                val inlinePromptId = buttonSection.getConfigurationSection("input")?.let { inputSection ->
+                    val promptId = "button-${normalizeTokenKey(key)}"
+                    prompts[promptId] = parsePrompt(promptId, inputSection)
+                    promptId
+                }
+                val actions = parseActionNodes(actionNodes(buttonSection)).toMutableList()
+                if (inlinePromptId != null && actions.none { it is MenuAction.Prompt && it.promptId == inlinePromptId }) {
+                    actions += MenuAction.Prompt(inlinePromptId)
+                }
+                put(
+                    symbol,
+                    ButtonDefinition(
+                        symbol = symbol,
+                        icon = icon,
+                        actions = actions,
+                        permission = buttonSection.getString("permission")?.takeIf { it.isNotBlank() },
+                        visiblePermission = buttonSection.getString("visible-permission")?.takeIf { it.isNotBlank() },
+                        denyActions = parseActions(stringList(buttonSection, "deny-actions", "deny")),
+                        conditions = parseConditions(buttonSection, "conditions"),
+                        states = loadButtonStates(buttonSection, baseStyle),
+                        updateIntervalTicks = parseButtonUpdateTicks(buttonSection),
+                    ),
+                )
             }
-            val actions = parseActions(actionStrings(buttonSection)).toMutableList()
-            if (inlinePromptId != null && actions.none { it is MenuAction.Prompt && it.promptId == inlinePromptId }) {
-                actions += MenuAction.Prompt(inlinePromptId)
-            }
-            symbol to ButtonDefinition(
-                symbol = symbol,
-                icon = icon,
-                actions = actions,
-                permission = buttonSection.getString("permission")?.takeIf { it.isNotBlank() },
-                visiblePermission = buttonSection.getString("visible-permission")?.takeIf { it.isNotBlank() },
-                denyActions = parseActions(stringList(buttonSection, "deny-actions", "deny")),
-                conditions = parseConditions(buttonSection.getConfigurationSection("conditions")),
-                states = loadButtonStates(buttonSection.getConfigurationSection("states"), baseStyle),
-            )
         }
         if (!buttons.containsKey('#') && !fill.isEmpty()) {
             return buttons + ('#' to ButtonDefinition('#', fill.finalize(), emptyList(), null, null, emptyList(), emptyList(), emptyList()))
@@ -196,36 +301,112 @@ class MenuRepository(
     }
 
     private fun loadButtonStates(
-        section: ConfigurationSection?,
+        root: ConfigurationSection?,
         baseStyle: IconStyle,
     ): List<ButtonStateDefinition> {
-        if (section == null) {
+        if (root == null) {
             return emptyList()
         }
-        return section.getKeys(false).map { key ->
+        val explicitStates = root.getConfigurationSection("states")?.getKeys(false)?.map { key ->
+            val section = root.getConfigurationSection("states")
+                ?: error("Button states section is invalid")
             val stateSection = section.getConfigurationSection(key)
                 ?: error("Button state '$key' is invalid")
-            val hasIconOverride = listOf("material", "mats", "head", "texture", "name", "lore", "amount", "glow", "shiny", "display")
-                .any(stateSection::contains)
-            val actionValues = actionStrings(stateSection)
-            ButtonStateDefinition(
-                id = key,
-                conditions = parseConditions(stateSection.getConfigurationSection("conditions")),
-                icon = if (hasIconOverride) baseStyle.merged(parseIconStyle(stateSection)).finalize() else null,
-                actions = if (actionValues.isEmpty()) null else parseActions(actionValues),
-                permission = if (stateSection.contains("permission")) stateSection.getString("permission")?.takeIf { it.isNotBlank() } else null,
-                visiblePermission = if (stateSection.contains("visible-permission")) {
-                    stateSection.getString("visible-permission")?.takeIf { it.isNotBlank() }
-                } else {
-                    null
-                },
-                denyActions = if (stateSection.contains("deny-actions") || stateSection.contains("deny")) {
-                    parseActions(stringList(stateSection, "deny-actions", "deny"))
-                } else {
-                    null
-                },
-            )
+            parseButtonState(key, stateSection, baseStyle)
+        }.orEmpty()
+        val iconStates = loadIconStates(root, baseStyle)
+        return explicitStates + iconStates
+    }
+
+    private fun parseButtonState(
+        key: String,
+        stateSection: ConfigurationSection,
+        baseStyle: IconStyle,
+    ): ButtonStateDefinition {
+        val hasIconOverride = listOf("material", "mats", "head", "texture", "name", "lore", "amount", "glow", "shiny", "display")
+            .any(stateSection::contains)
+        val actionValues = actionNodes(stateSection)
+        return ButtonStateDefinition(
+            id = key,
+            conditions = parseStateConditions(stateSection),
+            icon = if (hasIconOverride) baseStyle.merged(parseIconStyle(stateSection)).finalize() else null,
+            actions = if (actionValues.isEmpty()) emptyList() else parseActionNodes(actionValues),
+            permission = if (stateSection.contains("permission")) stateSection.getString("permission")?.takeIf { it.isNotBlank() } else null,
+            visiblePermission = if (stateSection.contains("visible-permission")) {
+                stateSection.getString("visible-permission")?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            },
+            denyActions = if (stateSection.contains("deny-actions") || stateSection.contains("deny")) {
+                parseActions(stringList(stateSection, "deny-actions", "deny"))
+            } else {
+                null
+            },
+        )
+    }
+
+    private fun loadIconStates(
+        root: ConfigurationSection,
+        baseStyle: IconStyle,
+    ): List<ButtonStateDefinition> {
+        val icons = root.getMapList("icons")
+        if (icons.isEmpty()) {
+            return emptyList()
         }
+        return icons.mapIndexed { index, entry ->
+            parseIconState("icon-$index", entry, baseStyle)
+        }
+    }
+
+    private fun parseIconState(
+        id: String,
+        entry: Map<*, *>,
+        baseStyle: IconStyle,
+    ): ButtonStateDefinition {
+        val stateYaml = YamlConfiguration()
+        applyMap(stateYaml, entry)
+        val hasIconOverride = listOf("material", "mats", "head", "texture", "name", "lore", "amount", "glow", "shiny", "display")
+            .any(stateYaml::contains)
+        val actionValues = actionNodes(stateYaml)
+        return ButtonStateDefinition(
+            id = id,
+            conditions = parseStateConditions(stateYaml),
+            icon = if (hasIconOverride) baseStyle.merged(parseIconStyle(stateYaml)).finalize() else null,
+            actions = if (actionValues.isEmpty()) emptyList() else parseActionNodes(actionValues),
+            permission = stateYaml.getString("permission")?.takeIf { it.isNotBlank() },
+            visiblePermission = stateYaml.getString("visible-permission")?.takeIf { it.isNotBlank() },
+            denyActions = if (stateYaml.contains("deny-actions") || stateYaml.contains("deny")) {
+                parseActions(stringList(stateYaml, "deny-actions", "deny"))
+            } else {
+                null
+            },
+        )
+    }
+
+    private fun applyMap(
+        section: ConfigurationSection,
+        values: Map<*, *>,
+    ) {
+        values.forEach { (rawKey, rawValue) ->
+            val key = rawKey as? String ?: return@forEach
+            when (rawValue) {
+                is Map<*, *> -> {
+                    val child = section.createSection(key)
+                    applyMap(child, rawValue)
+                }
+
+                else -> section.set(key, rawValue)
+            }
+        }
+    }
+
+    private fun parseStateConditions(section: ConfigurationSection): List<MenuCondition> {
+        val explicit = parseConditions(section, "conditions")
+        if (explicit.isNotEmpty()) {
+            return explicit
+        }
+        val single = section.getString("condition")?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return parseConditionShorthand(single)
     }
 
     private fun parseIconStyle(section: ConfigurationSection?): IconStyle {
@@ -338,6 +519,16 @@ class MenuRepository(
         return ProviderUpdateDefinition(interval)
     }
 
+    private fun parseButtonUpdateTicks(section: ConfigurationSection): Long? {
+        if (!section.contains("update")) {
+            return null
+        }
+        val updateSection = section.getConfigurationSection("update")
+        val interval = updateSection?.getLong("interval")
+            ?: section.getLong("update")
+        return interval.takeIf { it > 0L }
+    }
+
     private fun parsePageEntry(
         id: String,
         section: ConfigurationSection,
@@ -350,7 +541,7 @@ class MenuRepository(
         return PageEntryDefinition(
             id = id,
             icon = icon,
-            actions = parseActions(actionStrings(section)),
+            actions = parseActionNodes(actionNodes(section)),
             placeholders = section.getConfigurationSection("placeholders")
                 ?.getKeys(false)
                 ?.associateWith { key -> section.getConfigurationSection("placeholders")!!.getString(key).orEmpty() }
@@ -374,7 +565,7 @@ class MenuRepository(
 
         val commandSpecs = stringList(section, "command", "Command")
         if (commandSpecs.isNotEmpty()) {
-            plugin.logger.warning("Bindings.command 暂未实现动态指令注册，请继续使用 /amenu open <menuId> 作为命令入口。")
+            bindings += commandSpecs.map { spec -> parseShorthandCommandBinding(menuId, spec) }
         }
 
         section.getKeys(false)
@@ -410,6 +601,7 @@ class MenuRepository(
             id = id,
             menuId = menuId,
             type = MenuBindingType.ITEM,
+            commandAlias = null,
             materialName = material,
             name = attributes["name"],
             actions = linkedSetOf(
@@ -418,6 +610,23 @@ class MenuRepository(
                 MenuBindingAction.RIGHT_CLICK_BLOCK,
             ),
             permission = attributes["permission"],
+            placeholders = emptyMap(),
+            conditions = emptyList(),
+        )
+    }
+
+    private fun parseShorthandCommandBinding(menuId: String, raw: String): MenuBindingDefinition {
+        val alias = raw.trim().removePrefix("/").trim()
+        require(alias.isNotEmpty()) { "Bindings.command entries must not be blank" }
+        return MenuBindingDefinition(
+            id = normalizeTokenKey(alias),
+            menuId = menuId,
+            type = MenuBindingType.COMMAND,
+            commandAlias = alias,
+            materialName = null,
+            name = null,
+            actions = emptySet(),
+            permission = null,
             placeholders = emptyMap(),
             conditions = emptyList(),
         )
@@ -441,6 +650,7 @@ class MenuRepository(
             id = id,
             menuId = menuId,
             type = type,
+            commandAlias = stringValue(section, "command", "alias"),
             materialName = stringValue(section, "material", "mats"),
             name = scalarOrFirstList(section, "name"),
             actions = actions,
@@ -448,7 +658,7 @@ class MenuRepository(
             placeholders = placeholdersSection?.getKeys(false)?.associateWith { key ->
                 placeholdersSection.getString(key).orEmpty()
             } ?: emptyMap(),
-            conditions = parseConditions(section.getConfigurationSection("conditions")),
+            conditions = parseConditions(section, "conditions"),
         )
     }
 
@@ -509,46 +719,110 @@ class MenuRepository(
         return mapOf('#' to ButtonDefinition('#', fill.finalize(), emptyList(), null, null, emptyList(), emptyList(), emptyList()))
     }
 
-    private fun actionStrings(section: ConfigurationSection): List<String> {
+    private fun actionNodes(section: ConfigurationSection): List<Any?> {
         val nestedActions = section.getConfigurationSection("actions")
         return buildList {
-            addAll(stringList(section, "actions", "click", "run"))
+            addAll(rawListValue(section, "actions", "click", "run"))
             if (nestedActions != null) {
-                addAll(stringList(nestedActions, "all"))
-                addAll(stringList(nestedActions, "left"))
-                addAll(stringList(nestedActions, "right"))
-                addAll(stringList(nestedActions, "shift-left"))
-                addAll(stringList(nestedActions, "shift-right"))
+                addAll(rawListValue(nestedActions, "all"))
+                addAll(rawListValue(nestedActions, "left"))
+                addAll(rawListValue(nestedActions, "right"))
+                addAll(rawListValue(nestedActions, "shift-left"))
+                addAll(rawListValue(nestedActions, "shift-right"))
+                nestedActions.getConfigurationSection("all")?.let { addAll(rawListValue(it, "actions", "all")) }
+                nestedActions.getConfigurationSection("left")?.let { addAll(rawListValue(it, "actions", "all")) }
+                nestedActions.getConfigurationSection("right")?.let { addAll(rawListValue(it, "actions", "all")) }
+                nestedActions.getConfigurationSection("shift-left")?.let { addAll(rawListValue(it, "actions", "all")) }
+                nestedActions.getConfigurationSection("shift-right")?.let { addAll(rawListValue(it, "actions", "all")) }
             }
         }
     }
 
     private fun parseActions(rawActions: List<String>): List<MenuAction> {
-        return rawActions.map { raw ->
-            val action = raw.trim()
-            val descriptor = parseActionDescriptor(action)
-            if (descriptor == null) {
-                MenuAction.PlayerCommand(action)
-            } else {
-                val type = descriptor.first
-                val value = descriptor.second
-                when (type) {
-                    "close" -> MenuAction.Close
-                    "back" -> MenuAction.Back
-                    "refresh" -> MenuAction.Refresh
-                    "delay" -> MenuAction.Delay(requireArgument(type, value).toLongOrNull() ?: error("Action '$type' requires a numeric value"))
-                    "open" -> MenuAction.Open(requireArgument(type, value))
-                    "prompt" -> MenuAction.Prompt(requireArgument(type, value))
-                    "page" -> parsePageAction(value)
-                    "player" -> MenuAction.PlayerCommand(requireArgument(type, value))
-                    "command" -> MenuAction.PlayerCommand(requireArgument(type, value))
-                    "console" -> MenuAction.ConsoleCommand(requireArgument(type, value))
-                    "message" -> MenuAction.Message(requireArgument(type, value))
-                    "sound" -> MenuAction.Sound(parseSoundSpec(requireArgument(type, value)))
-                    else -> error("Unknown action type '$type'")
-                }
+        return parseActionNodes(rawActions.map { it as Any? })
+    }
+
+    private fun parseActionNodes(rawActions: List<Any?>): List<MenuAction> {
+        return rawActions.flatMap { raw ->
+            when (raw) {
+                null -> emptyList()
+                is String -> listOf(parseActionString(raw))
+                is Map<*, *> -> listOf(parseActionMap(raw))
+                else -> listOf(parseActionString(raw.toString()))
             }
         }
+    }
+
+    private fun parseActionString(raw: String): MenuAction {
+        val action = raw.trim()
+        val descriptor = parseActionDescriptor(action)
+        if (descriptor == null) {
+            return MenuAction.PlayerCommand(action)
+        }
+
+        val type = descriptor.first
+        val value = descriptor.second
+        return when (type) {
+            "close" -> MenuAction.Close
+            "back" -> MenuAction.Back
+            "refresh" -> MenuAction.Refresh
+            "delay" -> MenuAction.Delay(requireArgument(type, value).toLongOrNull() ?: error("Action '$type' requires a numeric value"))
+            "open" -> MenuAction.Open(requireArgument(type, value))
+            "prompt" -> MenuAction.Prompt(requireArgument(type, value))
+            "page" -> parsePageAction(value)
+            "player" -> MenuAction.PlayerCommand(requireArgument(type, value))
+            "command" -> MenuAction.PlayerCommand(requireArgument(type, value))
+            "console" -> MenuAction.ConsoleCommand(requireArgument(type, value))
+            "tell", "message" -> MenuAction.Message(requireArgument(type, value))
+            "take-point" -> MenuAction.TakePoint(requireArgument(type, value))
+            "title" -> parseTitleAction(requireArgument(type, value))
+            "sound" -> MenuAction.Sound(parseSoundSpec(requireArgument(type, value)))
+            else -> error("Unknown action type '$type'")
+        }
+    }
+
+    private fun parseActionMap(raw: Map<*, *>): MenuAction {
+        val yaml = YamlConfiguration()
+        applyMap(yaml, raw)
+        val condition = yaml.getString("condition")?.takeIf { it.isNotBlank() }
+            ?: error("Action object must declare a non-blank condition")
+        return MenuAction.Conditional(
+            condition = parseSingleCondition(condition),
+            successActions = parseActionNodes(branchActionNodes(yaml, "actions")),
+            denyActions = parseActionNodes(branchActionNodes(yaml, "deny")),
+        )
+    }
+
+    private fun branchActionNodes(
+        root: ConfigurationSection,
+        key: String,
+    ): List<Any?> {
+        val direct = rawListValue(root, key)
+        if (direct.isNotEmpty()) {
+            return direct
+        }
+        val section = root.getConfigurationSection(key) ?: return emptyList()
+        return buildList {
+            addAll(rawListValue(section, "actions", "click", "run"))
+            addAll(rawListValue(section, "all"))
+            addAll(rawListValue(section, "left"))
+            addAll(rawListValue(section, "right"))
+            addAll(rawListValue(section, "shift-left"))
+            addAll(rawListValue(section, "shift-right"))
+            section.getConfigurationSection("all")?.let { addAll(rawListValue(it, "actions", "all")) }
+            section.getConfigurationSection("left")?.let { addAll(rawListValue(it, "actions", "all")) }
+            section.getConfigurationSection("right")?.let { addAll(rawListValue(it, "actions", "all")) }
+            section.getConfigurationSection("shift-left")?.let { addAll(rawListValue(it, "actions", "all")) }
+            section.getConfigurationSection("shift-right")?.let { addAll(rawListValue(it, "actions", "all")) }
+        }
+    }
+
+    private fun parseTitleAction(raw: String): MenuAction.Title {
+        val parts = raw.split("||", limit = 2)
+        return MenuAction.Title(
+            title = parts[0].trim(),
+            subtitle = parts.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() },
+        )
     }
 
     private fun parseActionDescriptor(action: String): Pair<String, String>? {
@@ -623,10 +897,22 @@ class MenuRepository(
         }
     }
 
-    private fun parseConditions(section: ConfigurationSection?): List<MenuCondition> {
-        if (section == null) {
+    private fun parseConditions(
+        root: ConfigurationSection?,
+        key: String = "conditions",
+    ): List<MenuCondition> {
+        if (root == null) {
             return emptyList()
         }
+        val section = root.getConfigurationSection(key)
+        if (section != null) {
+            return parseConditionSection(section)
+        }
+        val shorthand = listValue(root, key)?.flatMap(::parseConditionShorthand).orEmpty()
+        return shorthand
+    }
+
+    private fun parseConditionSection(section: ConfigurationSection): List<MenuCondition> {
         val conditions = mutableListOf<MenuCondition>()
         section.getString("has-permission")?.takeIf { it.isNotBlank() }?.let {
             conditions += MenuCondition.HasPermission(it)
@@ -645,6 +931,94 @@ class MenuRepository(
             }
         }
         return conditions
+    }
+
+    private fun parseConditionShorthand(raw: String): List<MenuCondition> {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) {
+            return emptyList()
+        }
+        val lowered = trimmed.lowercase(Locale.ROOT)
+        if (lowered.startsWith("check ")) {
+            return listOf(parseCheckCondition(trimmed.substring(6).trim()))
+        }
+        if (lowered.startsWith("papi ")) {
+            return listOf(parseCheckCondition(trimmed))
+        }
+
+        val separatorIndex = trimmed.indexOf(':')
+        val type: String
+        val value: String
+        if (separatorIndex > 0) {
+            type = trimmed.substring(0, separatorIndex).trim().trimStart('*').lowercase(Locale.ROOT)
+            value = trimmed.substring(separatorIndex + 1).trim().trimStart('*')
+        } else {
+            val parts = trimmed.split(WHITESPACE_REGEX, limit = 2).filter { it.isNotBlank() }
+            require(parts.size == 2) {
+                "Condition shorthand '$raw' must use '<type>: <value>' or '<type> <value>'"
+            }
+            type = parts[0].trim().trimStart('*').lowercase(Locale.ROOT)
+            value = parts[1].trim().trimStart('*')
+        }
+        require(value.isNotBlank()) { "Condition shorthand '$raw' requires a value" }
+
+        return when (type) {
+            "perm", "permission", "has-permission" -> listOf(MenuCondition.HasPermission(value))
+            "!perm", "missing-permission", "not-permission" -> listOf(MenuCondition.MissingPermission(value))
+            "placeholder", "placeholder-equals" -> listOf(parsePlaceholderCondition(value, negate = false))
+            "!placeholder", "placeholder-not-equals" -> listOf(parsePlaceholderCondition(value, negate = true))
+            else -> error("Unknown condition shorthand type '$type'")
+        }
+    }
+
+    private fun parseSingleCondition(raw: String): MenuCondition {
+        return parseConditionShorthand(raw).singleOrNull()
+            ?: error("Condition '$raw' must resolve to exactly one runtime condition")
+    }
+
+    private fun parseCheckCondition(raw: String): MenuCondition {
+        var expression = raw.trim()
+        if (expression.lowercase(Locale.ROOT).startsWith("papi ")) {
+            expression = expression.substring(5).trim()
+        }
+        val match = CHECK_CONDITION_REGEX.matchEntire(expression)
+            ?: error("Check condition '$raw' must use '<left> <op> <right>'")
+        val left = match.groupValues[1].trim().trimStart('*')
+        val operator = parseComparisonOperator(match.groupValues[2])
+        val right = match.groupValues[3].trim().trimStart('*')
+        return MenuCondition.Comparison(left, operator, right)
+    }
+
+    private fun parseComparisonOperator(raw: String): ComparisonOperator {
+        return when (raw.trim()) {
+            ">" -> ComparisonOperator.GREATER_THAN
+            ">=" -> ComparisonOperator.GREATER_THAN_OR_EQUAL
+            "<" -> ComparisonOperator.LESS_THAN
+            "<=" -> ComparisonOperator.LESS_THAN_OR_EQUAL
+            "=",
+            "==" -> ComparisonOperator.EQUAL
+            "!=" -> ComparisonOperator.NOT_EQUAL
+            else -> error("Unknown comparison operator '$raw'")
+        }
+    }
+
+    private fun parsePlaceholderCondition(
+        raw: String,
+        negate: Boolean,
+    ): MenuCondition {
+        val separatorIndex = raw.indexOf('=')
+        require(separatorIndex > 0 && separatorIndex < raw.length - 1) {
+            "Placeholder condition '$raw' must use the format 'key=value'"
+        }
+        val key = raw.substring(0, separatorIndex).trim()
+        val value = raw.substring(separatorIndex + 1).trim()
+        require(key.isNotBlank()) { "Placeholder condition '$raw' requires a key" }
+        require(value.isNotBlank()) { "Placeholder condition '$raw' requires a value" }
+        return if (negate) {
+            MenuCondition.PlaceholderNotEquals(key, value)
+        } else {
+            MenuCondition.PlaceholderEquals(key, value)
+        }
     }
 
     private fun requireArgument(type: String, value: String): String {
@@ -680,6 +1054,25 @@ class MenuRepository(
         shapeSymbols[key]?.let { return it }
         require(key.length == 1) { "$label '$key' must be a one-character symbol or appear in Shape using backticks" }
         return key.first()
+    }
+
+    private fun resolveButtonSymbol(
+        key: String,
+        buttonSection: ConfigurationSection,
+        shapeSymbols: Map<String, Char>,
+    ): Char? {
+        shapeSymbols[key]?.let { return it }
+
+        val explicitSymbol = buttonSection.getString("symbol")?.trim().orEmpty()
+        if (explicitSymbol.isNotEmpty()) {
+            return resolveLayoutSymbol(explicitSymbol, shapeSymbols, "button '$key' symbol")
+        }
+
+        if (key.length == 1) {
+            return key.first()
+        }
+
+        return null
     }
 
     private fun normalizeTokenKey(raw: String): String {
@@ -738,12 +1131,41 @@ class MenuRepository(
         return listValue(root, *keys) ?: emptyList()
     }
 
+    private fun rawListValue(root: ConfigurationSection?, vararg keys: String): List<Any?> {
+        if (root == null) {
+            return emptyList()
+        }
+        for (key in keys) {
+            when {
+                root.isList(key) -> return root.getList(key) ?: emptyList()
+                root.isString(key) -> return listOf(root.getString(key))
+            }
+        }
+        return emptyList()
+    }
+
     private companion object {
         private val WHITESPACE_REGEX = Regex("\\s+")
+        private val CHECK_CONDITION_REGEX = Regex("(.+?)\\s*(>=|<=|==|!=|=|>|<)\\s*(.+)")
     }
 }
 
 private data class ParsedLayout(
     val layout: List<String>,
     val symbols: Map<String, Char>,
+)
+
+data class MenuLoadReport(
+    val scannedFiles: Int,
+    val loadedMenus: Int,
+    val applied: Boolean,
+    val errors: List<MenuLoadError>,
+) {
+    val successful: Boolean
+        get() = errors.isEmpty()
+}
+
+data class MenuLoadError(
+    val fileName: String,
+    val message: String,
 )

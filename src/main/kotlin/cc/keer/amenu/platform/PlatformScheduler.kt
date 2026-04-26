@@ -11,6 +11,8 @@ interface PlatformScheduler {
 
     fun executeGlobal(task: Runnable)
 
+    fun runLaterAsync(delayTicks: Long, task: Runnable): TaskHandle
+
     fun runLaterFor(player: Player, delayTicks: Long, task: Runnable): TaskHandle
 
     fun runRepeatingFor(player: Player, delayTicks: Long, periodTicks: Long, task: Runnable): TaskHandle

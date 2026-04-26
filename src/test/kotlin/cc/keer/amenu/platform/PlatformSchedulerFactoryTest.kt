@@ -1,6 +1,7 @@
 package cc.keer.amenu.platform
 
 import cc.keer.amenu.support.MenuPluginTestHarness
+import io.papermc.paper.threadedregions.scheduler.ScheduledTask
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -44,5 +45,33 @@ class PlatformSchedulerFactoryTest : MenuPluginTestHarness() {
         assertEquals(runsBeforeCancel, repeatingRuns.get())
 
         TaskHandle.NOOP.cancel()
+    }
+
+    @Test
+    fun reflective_folia_task_handle_prefers_public_scheduled_task_interface() {
+        val task = HiddenScheduledTask()
+        val handleClass = Class.forName("cc.keer.amenu.platform.ReflectiveTaskHandle")
+        val constructor = handleClass.getDeclaredConstructor(Any::class.java)
+        constructor.isAccessible = true
+        val handle = constructor.newInstance(task) as TaskHandle
+
+        handle.cancel()
+
+        assertTrue(task.cancelled)
+    }
+
+    private class HiddenScheduledTask : ScheduledTask {
+        var cancelled = false
+
+        override fun getOwningPlugin() = throw UnsupportedOperationException()
+
+        override fun isRepeatingTask(): Boolean = false
+
+        override fun cancel(): ScheduledTask.CancelledState {
+            cancelled = true
+            return ScheduledTask.CancelledState.CANCELLED_BY_CALLER
+        }
+
+        override fun getExecutionState(): ScheduledTask.ExecutionState = ScheduledTask.ExecutionState.IDLE
     }
 }

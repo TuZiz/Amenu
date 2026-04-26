@@ -1,6 +1,8 @@
 package cc.keer.amenu.service
 
 import cc.keer.amenu.support.MenuPluginTestHarness
+import org.bukkit.entity.Player
+import org.bukkit.event.player.AsyncPlayerChatEvent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -59,6 +61,24 @@ class ChatInputServiceCompatibilityTest : MenuPluginTestHarness() {
     }
 
     @Test
+    fun legacy_async_player_chat_path_also_completes_prompts() {
+        val records = mutableListOf<String>()
+        registerRecordingCommand("record-input", records)
+
+        plugin.chatInputService.startPrompt(player, "compat-runtime", "reusable", emptyMap())
+        assertEquals("Compat start", nextPlainMessage())
+
+        val recipients = mutableSetOf<Player>(player)
+        val event = AsyncPlayerChatEvent(true, player, "Legacy", recipients)
+        plugin.chatInputService.onLegacyAsyncChat(event)
+        advanceTicks(1L)
+
+        assertTrue(event.isCancelled)
+        assertEquals("Compat Legacy", nextPlainMessage())
+        assertEquals(listOf("Tester|record-input|Legacy"), records)
+    }
+
+    @Test
     fun timeout_expiry_still_cleans_up_through_platform_scheduler() {
         val records = mutableListOf<String>()
         registerRecordingCommand("record-input", records)
@@ -67,7 +87,7 @@ class ChatInputServiceCompatibilityTest : MenuPluginTestHarness() {
         assertEquals("Compat start", nextPlainMessage())
 
         advanceTicks(5L * 20L)
-        assertEquals("[AMenu] Prompt timed out.", nextPlainMessage())
+        assertEquals("[AMenu] 输入流程已超时，请重新打开菜单后再试一次。", nextPlainMessage())
 
         submitChat("late")
         assertTrue(records.isEmpty())
@@ -82,7 +102,7 @@ class ChatInputServiceCompatibilityTest : MenuPluginTestHarness() {
         assertEquals("Compat start", nextPlainMessage())
 
         plugin.chatInputService.startPrompt(player, "compat-runtime", "reusable", emptyMap())
-        assertEquals("[AMenu] Prompt replaced.", nextPlainMessage())
+        assertEquals("[AMenu] 你原有的输入流程已被新的输入请求替换。", nextPlainMessage())
         assertEquals("Compat start", nextPlainMessage())
 
         submitChat("latest")

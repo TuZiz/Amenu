@@ -87,6 +87,7 @@ data class ButtonDefinition(
     val denyActions: List<MenuAction>,
     val conditions: List<MenuCondition>,
     val states: List<ButtonStateDefinition>,
+    val updateIntervalTicks: Long? = null,
 )
 
 data class ButtonStateDefinition(
@@ -143,6 +144,7 @@ data class MenuBindingDefinition(
     val id: String,
     val menuId: String,
     val type: MenuBindingType,
+    val commandAlias: String?,
     val materialName: String?,
     val name: String?,
     val actions: Set<MenuBindingAction>,
@@ -153,6 +155,7 @@ data class MenuBindingDefinition(
 
 enum class MenuBindingType {
     ITEM,
+    COMMAND,
 }
 
 enum class MenuBindingAction {
@@ -169,6 +172,16 @@ sealed interface MenuCondition {
     data class MissingPermission(val permission: String) : MenuCondition
     data class PlaceholderEquals(val key: String, val value: String) : MenuCondition
     data class PlaceholderNotEquals(val key: String, val value: String) : MenuCondition
+    data class Comparison(val left: String, val operator: ComparisonOperator, val right: String) : MenuCondition
+}
+
+enum class ComparisonOperator {
+    GREATER_THAN,
+    GREATER_THAN_OR_EQUAL,
+    LESS_THAN,
+    LESS_THAN_OR_EQUAL,
+    EQUAL,
+    NOT_EQUAL,
 }
 
 data class IconStyle(
@@ -230,6 +243,9 @@ sealed interface MenuAction {
     data class Page(val operation: PageOperation, val regionId: String? = null) : MenuAction
     data class PlayerCommand(val command: String) : MenuAction
     data class ConsoleCommand(val command: String) : MenuAction
+    data class Conditional(val condition: MenuCondition, val successActions: List<MenuAction>, val denyActions: List<MenuAction>) : MenuAction
+    data class TakePoint(val amount: String) : MenuAction
+    data class Title(val title: String, val subtitle: String? = null) : MenuAction
     data class Message(val text: String) : MenuAction
     data class Sound(val spec: SoundSpec) : MenuAction
 }

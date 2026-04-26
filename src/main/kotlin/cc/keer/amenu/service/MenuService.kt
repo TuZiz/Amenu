@@ -3,6 +3,7 @@ package cc.keer.amenu.service
 import cc.keer.amenu.AMenuPlugin
 import cc.keer.amenu.PluginSettings
 import cc.keer.amenu.config.ButtonDefinition
+import cc.keer.amenu.config.ComparisonOperator
 import cc.keer.amenu.config.IconDefinition
 import cc.keer.amenu.config.MenuAction
 import cc.keer.amenu.config.MenuCondition
@@ -23,11 +24,13 @@ import cc.keer.amenu.util.InventoryAccess
 import cc.keer.amenu.util.ItemFactory
 import cc.keer.amenu.util.TextFormatter
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.title.Title
 import org.bukkit.Sound
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
+import java.time.Duration
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlin.math.ceil
@@ -41,11 +44,14 @@ class MenuService(
     val placeholderPipeline: PlaceholderPipeline = PlaceholderPipeline(BukkitPlaceholderApiBridge(plugin)),
     private val providerRegistry: MenuProviderRegistry = MenuProviderRegistry.createBuiltins(platformScheduler),
     private val providerCache: ProviderCache = ProviderCache(),
+    private val dynamicRefreshController: DynamicRefreshController = DynamicRefreshController(platformScheduler),
 ) {
 
     private lateinit var chatInputService: ChatInputService
     private val history = mutableMapOf<UUID, ArrayDeque<String>>()
     private val menuStates = mutableMapOf<UUID, MutableMap<String, MenuViewState>>()
+    private val closeCleanupSuppressed = mutableSetOf<UUID>()
+    private val pendingMenuOpens = mutableMapOf<UUID, cc.keer.amenu.platform.TaskHandle>()
 
     fun attachChatInputService(service: ChatInputService) {
         chatInputService = service
@@ -53,12 +59,44 @@ class MenuService(
 
     fun reload(newSettings: PluginSettings) {
         settings = newSettings
+        dynamicRefreshController.cancelAll()
+        pendingMenuOpens.values.forEach(cc.keer.amenu.platform.TaskHandle::cancel)
+        pendingMenuOpens.clear()
         menuStates.clear()
         providerCache.clear()
     }
 
+    fun shutdown() {
+        dynamicRefreshController.cancelAll()
+        pendingMenuOpens.values.forEach(cc.keer.amenu.platform.TaskHandle::cancel)
+        pendingMenuOpens.clear()
+        menuStates.clear()
+        history.clear()
+        providerCache.clear()
+    }
+
+    fun handleInventoryClosed(player: Player, menuId: String) {
+        if (closeCleanupSuppressed.contains(player.uniqueId)) {
+            return
+        }
+        dynamicRefreshController.cancelMenu(player.uniqueId, menuId)
+        val stateMap = menuStates[player.uniqueId] ?: return
+        stateMap.remove(menuId)
+        if (stateMap.isEmpty()) {
+            menuStates.remove(player.uniqueId)
+        }
+    }
+
+    fun handlePlayerQuit(player: Player) {
+        dynamicRefreshController.cancelAllForPlayer(player.uniqueId)
+        cancelPendingMenuOpen(player.uniqueId)
+        menuStates.remove(player.uniqueId)
+        history.remove(player.uniqueId)
+    }
+
     fun openDefaultMenu(player: Player) {
         runForPlayer(player) {
+            cancelPendingMenuOpen(player.uniqueId)
             clearHistory(player)
             openMenuInternal(player, settings.defaultMenuId, emptyMap(), NavigationMode.ROOT)
         }
@@ -71,7 +109,29 @@ class MenuService(
         navigation: NavigationMode = NavigationMode.NONE,
     ) {
         runForPlayer(player) {
+            cancelPendingMenuOpen(player.uniqueId)
             openMenuInternal(player, menuId, placeholders, navigation)
+        }
+    }
+
+    fun openMenuDeferred(
+        player: Player,
+        menuId: String,
+        placeholders: Map<String, String> = emptyMap(),
+        navigation: NavigationMode = NavigationMode.NONE,
+        delayTicks: Long = 1L,
+    ) {
+        val delay = delayTicks.coerceAtLeast(1L)
+        runForPlayer(player) {
+            cancelPendingMenuOpen(player.uniqueId)
+            pendingMenuOpens[player.uniqueId] = platformScheduler.runLaterFor(
+                player,
+                delay,
+                Runnable {
+                    pendingMenuOpens.remove(player.uniqueId)
+                    openMenuInternal(player, menuId, placeholders, navigation)
+                },
+            )
         }
     }
 
@@ -110,6 +170,16 @@ class MenuService(
                     action.ticks.coerceAtLeast(0L),
                     Runnable { executeActionChain(player, menuId, actions, index + 1, placeholders) },
                 )
+            }
+
+            is MenuAction.Conditional -> {
+                val branch = if (matchesConditions(player, placeholders, listOf(action.condition))) {
+                    action.successActions
+                } else {
+                    action.denyActions
+                }
+                val remaining = if (index + 1 < actions.size) actions.subList(index + 1, actions.size) else emptyList()
+                executeActionChain(player, menuId, branch + remaining, 0, placeholders)
             }
 
             else -> {
@@ -172,8 +242,13 @@ class MenuService(
         holder.bind(inventory)
         renderMenu(player, menu, inventory, state)
 
-        player.openInventory(inventory)
-        renderOpenMenuIfCurrent(player, menu.id)
+        closeCleanupSuppressed += player.uniqueId
+        try {
+            player.openInventory(inventory)
+        } finally {
+            closeCleanupSuppressed -= player.uniqueId
+        }
+        syncDynamicRefresh(player, menu)
     }
 
     private fun handleClickInternal(player: Player, menuId: String, slot: Int) {
@@ -227,14 +302,53 @@ class MenuService(
                 placeholderPipeline.render(player, action.command, placeholders),
             )
 
+            is MenuAction.Conditional -> Unit
+            is MenuAction.TakePoint -> takePlayerPoints(player, action, placeholders)
+            is MenuAction.Title -> showTitle(player, action, placeholders)
             is MenuAction.Message -> sendRawMessage(player, action.text, placeholders)
             is MenuAction.Sound -> playSound(player, action.spec)
         }
     }
 
+    private fun takePlayerPoints(
+        player: Player,
+        action: MenuAction.TakePoint,
+        placeholders: Map<String, String>,
+    ) {
+        val amount = placeholderPipeline.render(player, action.amount, placeholders)
+        val commands = listOf(
+            "points take ${player.name} $amount -s",
+            "playerpoints take ${player.name} $amount -s",
+        )
+        if (commands.any(::dispatchConsole)) {
+            return
+        }
+        plugin.logger.warning(
+            "Failed to execute PlayerPoints deduction for ${player.name} (amount=$amount). Tried commands: ${commands.joinToString()}",
+        )
+    }
+
+    private fun dispatchConsole(command: String): Boolean {
+        return plugin.server.dispatchCommand(plugin.server.consoleSender, command)
+    }
+
     private fun playSound(player: Player, spec: SoundSpec) {
         val sound = runCatching { Sound.valueOf(spec.soundName) }.getOrNull() ?: return
         player.playSound(player.location, sound, spec.volume, spec.pitch)
+    }
+
+    private fun showTitle(
+        player: Player,
+        action: MenuAction.Title,
+        placeholders: Map<String, String>,
+    ) {
+        player.showTitle(
+            Title.title(
+                renderComponent(player, action.title, placeholders),
+                action.subtitle?.let { renderComponent(player, it, placeholders) } ?: Component.empty(),
+                Title.Times.times(Duration.ofMillis(300), Duration.ofMillis(1800), Duration.ofMillis(300)),
+            ),
+        )
     }
 
     private fun changePage(player: Player, menuId: String, action: MenuAction.Page) {
@@ -253,7 +367,7 @@ class MenuService(
             PageOperation.FIRST -> regionState.page = 0
             PageOperation.LAST -> regionState.page = pageTotal - 1
             PageOperation.REFRESH -> {
-                invalidateRegion(player, menu.id, region)
+                invalidateRegion(player, menu.id, region, dropLastGood = true)
                 resetRegionState(state, regionState, region)
                 regionState.page = 0
                 synchronizeRegionState(player, menu.id, state, region, regionState)
@@ -277,10 +391,11 @@ class MenuService(
     }
 
     private fun currentMenuId(player: Player): String? {
-        return (player.openInventory.topInventory.holder as? MenuHolder)?.menuId
+        return (player.openInventory.topInventory?.holder as? MenuHolder)?.menuId
     }
 
     private fun clearHistory(player: Player) {
+        dynamicRefreshController.cancelAllForPlayer(player.uniqueId)
         history.remove(player.uniqueId)
         menuStates.remove(player.uniqueId)
     }
@@ -329,7 +444,57 @@ class MenuService(
 
                 is MenuCondition.PlaceholderNotEquals ->
                     !placeholderPipeline.matchesValue(player, condition.key, condition.value, placeholders)
+
+                is MenuCondition.Comparison ->
+                    matchesComparisonCondition(player, condition, placeholders)
             }
+        }
+    }
+
+    private fun matchesComparisonCondition(
+        player: Player,
+        condition: MenuCondition.Comparison,
+        placeholders: Map<String, String>,
+    ): Boolean {
+        val left = placeholderPipeline.render(player, condition.left, placeholders)
+        val right = placeholderPipeline.render(player, condition.right, placeholders)
+        val leftNumber = left.toDoubleOrNull()
+        val rightNumber = right.toDoubleOrNull()
+        return if (leftNumber != null && rightNumber != null) {
+            compareNumeric(leftNumber, rightNumber, condition.operator)
+        } else {
+            compareText(left, right, condition.operator)
+        }
+    }
+
+    private fun compareNumeric(
+        left: Double,
+        right: Double,
+        operator: ComparisonOperator,
+    ): Boolean {
+        return when (operator) {
+            ComparisonOperator.GREATER_THAN -> left > right
+            ComparisonOperator.GREATER_THAN_OR_EQUAL -> left >= right
+            ComparisonOperator.LESS_THAN -> left < right
+            ComparisonOperator.LESS_THAN_OR_EQUAL -> left <= right
+            ComparisonOperator.EQUAL -> left == right
+            ComparisonOperator.NOT_EQUAL -> left != right
+        }
+    }
+
+    private fun compareText(
+        left: String,
+        right: String,
+        operator: ComparisonOperator,
+    ): Boolean {
+        val result = left.compareTo(right)
+        return when (operator) {
+            ComparisonOperator.GREATER_THAN -> result > 0
+            ComparisonOperator.GREATER_THAN_OR_EQUAL -> result >= 0
+            ComparisonOperator.LESS_THAN -> result < 0
+            ComparisonOperator.LESS_THAN_OR_EQUAL -> result <= 0
+            ComparisonOperator.EQUAL -> left == right
+            ComparisonOperator.NOT_EQUAL -> left != right
         }
     }
 
@@ -459,7 +624,50 @@ class MenuService(
         val menu = repository.menu(menuId) ?: return
         val state = stateFor(player, menu.id)
         renderMenu(player, menu, player.openInventory.topInventory, state)
+        syncDynamicRefresh(player, menu)
         player.updateInventory()
+    }
+
+    private fun syncDynamicRefresh(player: Player, menu: MenuDefinition) {
+        dynamicRefreshController.sync(player, menu, onRefreshSurface = { surfaceId ->
+            refreshSurface(player.uniqueId, menu.id, surfaceId)
+        }, onRefreshButton = { symbol ->
+            refreshButton(player.uniqueId, menu.id, symbol)
+        })
+    }
+
+    private fun refreshSurface(
+        playerId: UUID,
+        menuId: String,
+        surfaceId: String,
+    ) {
+        val player = plugin.server.getPlayer(playerId) ?: return
+        runForPlayer(player) {
+            val menu = repository.menu(menuId) ?: return@runForPlayer
+            val region = menu.pageRegions[surfaceId] ?: return@runForPlayer
+            invalidateRegion(player, menuId, region)
+            renderOpenMenuIfCurrent(player, menuId)
+        }
+    }
+
+    private fun refreshButton(
+        playerId: UUID,
+        menuId: String,
+        symbol: Char,
+    ) {
+        val player = plugin.server.getPlayer(playerId) ?: return
+        runForPlayer(player) {
+            val holder = player.openInventory.topInventory.holder as? MenuHolder ?: return@runForPlayer
+            if (holder.menuId != menuId) {
+                return@runForPlayer
+            }
+            val menu = repository.menu(menuId) ?: return@runForPlayer
+            val state = stateFor(player, menu.id)
+            menu.slotsFor(symbol).forEach { slot ->
+                player.openInventory.topInventory.setItem(slot, resolveItem(player, menu, slot, state))
+            }
+            player.updateInventory()
+        }
     }
 
     private fun resolvePageRegionId(menu: MenuDefinition, rawRegionId: String?): String? {
@@ -494,6 +702,10 @@ class MenuService(
             return 1
         }
         return max(1, ceil(entries.size.toDouble() / pageSize.coerceAtLeast(1).toDouble()).toInt())
+    }
+
+    private fun cancelPendingMenuOpen(playerId: UUID) {
+        pendingMenuOpens.remove(playerId)?.cancel()
     }
 
     private inline fun runForPlayer(player: Player, crossinline action: () -> Unit) {
@@ -655,9 +867,13 @@ class MenuService(
         player: Player,
         menuId: String,
         region: PageRegionDefinition,
+        dropLastGood: Boolean = false,
     ) {
         val providerType = providerTypeFor(region) ?: return
-        providerCache.invalidate(providerKey(player.uniqueId, menuId, region, providerType))
+        providerCache.invalidate(
+            key = providerKey(player.uniqueId, menuId, region, providerType),
+            dropLastGood = dropLastGood,
+        )
     }
 
     private fun ttlFor(

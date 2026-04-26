@@ -1,0 +1,64 @@
+Title: "<gradient:#58A6FF:#F778BA><bold>服务器皮肤功能</bold></gradient>"
+
+Shape:
+  - "#########"
+  - "###领#自###"
+  - "#########"
+
+Bindings:
+  command:
+    - "skin"
+
+BUTTONS:
+  "#":
+    display:
+      material: WHITE_STAINED_GLASS_PANE
+      name: "<yellow><bold>>> 分割线 <<<</bold></yellow>"
+    actions:
+      all:
+        - "sound: BLOCK_NOTE_BLOCK_PLING:1:2"
+
+  "领":
+    display:
+      material: PLAYER_HEAD
+      head: "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYWYxODFhYjg2ZjIxYTE2OTJmNmQyMzNkMmE1YmQyNDM1ZjFlYWE2NjY5NzA4NWM2NTQ1NTQ3YTk0YmVmZWQxYSJ9fX0="
+      name: "<aqua><bold>历史皮肤 / 公共皮肤</bold></aqua>"
+      lore:
+        - "<gray>查看历史皮肤和公共皮肤列表。</gray>"
+        - ""
+        - "<yellow>点击打开</yellow>"
+    actions:
+      all:
+        - "close"
+        - "delay: 1"
+        - "command: skins"
+
+  "自":
+    display:
+      material: PLAYER_HEAD
+      head: "eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvOWU2NmEzOWZmMzdjOGM2OTNlNjNjMTczMWExOGM1ODNhNzkzMGZkZjJlYzg5MTE1YzVjNGUzNTc5OThmNDg4MyJ9fX0="
+      name: "<aqua><bold>更换你的游戏皮肤</bold></aqua>"
+      lore:
+        - "<gray>点击后在聊天栏输入正版 ID。</gray>"
+        - "<dark_gray>输入 <white>cancel</white> 可取消本次操作。</dark_gray>"
+    actions:
+      all:
+        - "close"
+    input:
+      type: CHAT
+      timeout-seconds: 20
+      start:
+        - "<red><bold>请输入你要修改的正版 ID。</bold></red>"
+        - "<gray>支持 3-16 位字母、数字或下划线。</gray>"
+        - "<gray>输入 <white>cancel</white> 可取消本次操作。</gray>"
+      validation:
+        matches: "[A-Za-z0-9_]{3,16}"
+      invalid:
+        - "message: <red>请输入有效的正版 ID，只能包含字母、数字和下划线。</red>"
+        - "menu: skin"
+      cancel:
+        - "message: <yellow>您已经取消了这项操作。</yellow>"
+        - "menu: skin"
+      submit:
+        - "message: <green>正在为你切换皮肤到 <white>{input}</white>。</green>"
+        - "command: skin set {input}"

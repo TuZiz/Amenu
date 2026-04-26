@@ -1,0 +1,93 @@
+title: "AMenu History"
+
+layout:
+  - "#########"
+  - "#IIIII###"
+  - "#B#F#R###"
+
+fill:
+  material: BLACK_STAINED_GLASS_PANE
+  name: " "
+
+templates:
+  card:
+    glow: true
+    lore:
+      - "<gray>Page <white>{page}</white>/<white>{page-total}</white></gray>"
+      - "<dark_gray>ID: {entry-id}</dark_gray>"
+
+pages:
+  showcase:
+    symbol: "I"
+    provider:
+      type: entries
+      cache:
+        ttl: 5
+    async-delay: 4
+    loading:
+      material: CLOCK
+      name: "<yellow><bold>Loading provider cards...</bold></yellow>"
+      lore:
+        - "<gray>The region is waiting for its provider result.</gray>"
+    empty:
+      material: BARRIER
+      name: "<red><bold>No provider entries</bold></red>"
+      lore:
+        - "<gray>Explicit empty fallback stays visible instead of disappearing.</gray>"
+    error:
+      material: RED_STAINED_GLASS_PANE
+      name: "<red><bold>Provider error</bold></red>"
+      lore:
+        - "<gray>Explicit error fallback is rendered for provider failures.</gray>"
+    entries:
+      async-refresh:
+        template: card
+        material: CLOCK
+        name: "<aqua><bold>async-refresh</bold></aqua>"
+        click:
+          - "message: async-refresh"
+      provider-cache:
+        template: card
+        material: BOOK
+        name: "<gold><bold>provider-cache</bold></gold>"
+        click:
+          - "message: provider-cache"
+      stale-last-good:
+        template: card
+        material: EMERALD
+        name: "<green><bold>stale-last-good</bold></green>"
+        click:
+          - "message: stale-last-good"
+      loading-state:
+        template: card
+        material: PAPER
+        name: "<light_purple><bold>loading-state</bold></light_purple>"
+        click:
+          - "message: loading-state"
+      error-state:
+        template: card
+        material: REDSTONE
+        name: "<red><bold>error-state</bold></red>"
+        click:
+          - "message: error-state"
+
+buttons:
+  "B":
+    material: BOOKSHELF
+    name: "<gold><bold>Back To Showcase</bold></gold>"
+    click:
+      - "menu: showcase"
+
+  "F":
+    material: CLOCK
+    name: "<yellow><bold>Refresh Provider Surface</bold></yellow>"
+    lore:
+      - "<gray>Invalidate only the paged region and rerender in place.</gray>"
+    click:
+      - "page: refresh showcase"
+
+  "R":
+    material: NETHER_STAR
+    name: "<green><bold>Open Runtime</bold></green>"
+    click:
+      - "menu: runtime"

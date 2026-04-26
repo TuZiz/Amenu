@@ -1,110 +1,197 @@
 # AMenu
 
-AMenu is a general-purpose Minecraft menu plugin for Spigot, Paper, and Folia-aware execution. It is not a skin-only plugin. `skin menus are bundled examples only`.
+AMenu 是一个面向 Spigot、Paper 与 Folia 的现代化 Minecraft 菜单插件。  
+它不是皮肤插件，皮肤只是早期示例；现在 bundled 默认内容已经改成“综合服主菜单 + 功能实验室”结构。
 
-## Commands
+## 命令
 
 - `/amenu`
+- `/menu`
 - `/amenu open <menuId>`
 - `/amenu reload`
-- Compatibility alias: `/skinmenu`
+- `/amenu give <bindingId>`
+- `/amenu sync-bundled`
 
-## Canonical DSL
+## 当前 bundled 菜单
 
-The shortest recommended path is:
+- `menu.yml`
+  服务器综合菜单模板，适合直接改成你的正式首页。
+- `showcase.yml`
+  功能实验室，集中放分页、输入、绑定、后台演示等测试能力。
+- `history.yml`
+  分页与异步卡片展示示例。
+- `runtime.yml`
+  稳定的 CHAT 输入示例与分页实验室入口。
+- `admin.yml`
+  权限、拒绝动作、刷新与管理工具示例。
 
-- `layout`
-- `fill`
-- `buttons`
-- `head`
+## 推荐 DSL
+
+AMenu 现在推荐的写法是：
+
+- `Title`
+- `Shape`
+- `Fill`
+- `BUTTONS`
+- `display`
+- `actions`
+- 按钮内联 `input`
+
+同时也保留更短的直写字段：
+
+- `material`
+- `name`
+- `lore`
 - `click`
-- inline `input`
+- `head`
+- `glow`
 
-Advanced layers such as `templates`, `prompts`, `permission`, `visible-permission`, and `deny-actions` are still supported, but they are optional expansion layers rather than the default writing style.
+## 动作写法
+
+现在动作不再必须写成 `[close]` 这种带中括号的形式了。  
+你可以直接写更自然的简写：
 
 ```yaml
-title: "<gradient:#58A6FF:#F778BA><bold>Server Skin Center</bold></gradient>"
-
-layout:
-  - "#########"
-  - "##H#C#L##"
-  - "#########"
-
-fill:
-  material: WHITE_STAINED_GLASS_PANE
-  name: " "
-
-buttons:
-  "C":
-    head: "base64..."
-    glow: true
-    name: "<aqua><bold>Change your skin</bold></aqua>"
-    click:
-      - "[close]"
-    input:
-      start:
-        - "<yellow>Type a premium player ID.</yellow>"
-      cancel:
-        - "[message] <yellow>Cancelled.</yellow>"
-        - "[back]"
-      submit:
-        - "[player] skin set {input}"
-        - "[back]"
-
-  "H":
-    head: "base64..."
-    name: "<light_purple><bold>History / public skins</bold></light_purple>"
-    click:
-      - "[open history]"
-
-  "L":
-    material: PAPER
-    name: "<green><bold>Open skin list</bold></green>"
-    click:
-      - "[close]"
-      - "[player] skins"
+actions:
+  all:
+    - "close"
+    - "delay: 1"
+    - "player: home"
+    - "console: say hello"
+    - "message: <green>已打开</green>"
+    - "menu: history"
+    - "sound: ENTITY_EXPERIENCE_ORB_PICKUP:1:1.1"
 ```
 
-## Runtime interactions
+已支持的简写动作包括：
 
-`main.yml` stays intentionally short. Richer runtime behavior is documented through the bundled secondary examples:
+- `close`
+- `back`
+- `refresh`
+- `delay: <ticks>`
+- `player: <command>`
+- `command: <command>`
+- `console: <command>`
+- `message: <text>`
+- `menu: <menuId>`
+- `open: <menuId>`
+- `prompt: <promptId>`
+- `page: next <region>`
+- `page: previous <region>`
+- `page: refresh <region>`
+- `sound: <sound>:<volume>:<pitch>`
 
-- `history.yml` shows secondary navigation and back-stack behavior.
-- `admin.yml` shows permission checks, local `deny-actions`, and refresh behavior.
-- `runtime.yml` shows reusable prompts, inline `input`, cancel flow, and timeout guidance.
+旧写法如 `[close]`、`[player] home`、`[open history]` 仍然兼容。
 
-This split keeps the first configuration example short while still making the runtime interaction layer discoverable.
+## 综合菜单示例
 
-## Compatibility
+```yaml
+Title: "服务器主菜单"
 
-AMenu's Phase 3 compatibility contract is:
+Shape:
+  - "`档案``家`#`传送`#`便携`#`帮助``活动`"
+  - "##`商店``任务``福利``地标``称号`##"
+  - "##`领地奖励``在线奖励``随机传送``功能实验室``管理`##"
+  - "#########"
+  - "#`返回主城`#`资源说明`#`模板说明`#`现代路线`#"
+  - "#########"
 
-- `Spigot`: supported by the same shaded plugin jar and command surface.
-- `Paper`: covered by automated regressions plus live startup smoke.
-- `Folia`: supported through a Folia-aware scheduler layer, with automated regression coverage and a documented live smoke boundary.
+Fill:
+  display:
+    mats: WHITE_STAINED_GLASS_PANE
+    name: " "
 
-The proof boundary is explicit:
+BUTTONS:
+  "家":
+    display:
+      material: RED_BED
+      name: "<light_purple><bold>温馨小家</bold></light_purple>"
+    actions:
+      all:
+        - "close"
+        - "delay: 1"
+        - "player: home"
 
-- Automated proof: `BundledMenuCompatibilityTest`, `AMenuCommandTest`, `MenuRepositoryDslTest`, `mvn package`, and shaded jar inspection for `MiniMessage.class`.
-- Manual smoke: Paper/Folia server startup plus one real `/amenu` prompt/navigation pass using `.smoke/README.md`, `.smoke/paper-smoke.ps1`, and `.smoke/folia-smoke.ps1`.
+  "帮助":
+    display:
+      material: BOOK
+      name: "<yellow><bold>帮助中心</bold></yellow>"
+    actions:
+      all:
+        - "close"
+        - "delay: 1"
+        - "player: help"
 
-`main.yml` remains the shortest canonical example for the product. `history.yml`, `admin.yml`, and `runtime.yml` remain bundled examples that demonstrate navigation, permissions, refresh, and prompt flows without redefining AMenu as a skin-only plugin.
+  "功能实验室":
+    display:
+      material: NETHER_STAR
+      name: "<light_purple><bold>功能实验室</bold></light_purple>"
+    actions:
+      all:
+        - "menu: showcase"
+```
 
-## Current capabilities
+## 输入示例
 
-- Inventory GUI menus
-- `[close]`, `[open menuId]`, `[back]`, `[refresh]`
-- `[player]`, `[console]`, `[message]`, `[sound]`
-- Reusable `prompts` and inline button `input`
-- `permission`, `visible-permission`, `deny-actions`
-- Bundled examples: `main`, `history`, `admin`, `runtime`
+```yaml
+"快捷输入":
+  display:
+    material: WRITABLE_BOOK
+    name: "<aqua><bold>快捷输入</bold></aqua>"
+  actions:
+    all:
+      - "close"
+  input:
+    type: CHAT
+    start:
+      - "<yellow>请输入任意文本。</yellow>"
+    cancel:
+      - "message: <yellow>已取消。</yellow>"
+      - "menu: showcase"
+    submit:
+      - "message: <green>收到输入：<white>{input}</white></green>"
+      - "menu: runtime"
+```
 
-## Build
+## 分页示例
 
-Java 21 is required. The current `pom.xml` enforces `[21,22)`, so a default Java 25 runtime will fail validation.
+```yaml
+Pages:
+  showcase:
+    symbol: "I"
+    async-delay: 8
+    entries:
+      alpha:
+        material: BOOK
+        name: "<aqua><bold>Alpha</bold></aqua>"
+        click:
+          - "message: 你点击了 {entry-id}"
+
+BUTTONS:
+  "<":
+    actions:
+      all:
+        - "page: previous showcase"
+  ">":
+    actions:
+      all:
+        - "page: next showcase"
+```
+
+## 兼容说明
+
+- `Spigot`：支持
+- `Paper`：支持
+- `Folia`：支持，内部带 Folia-aware 调度抽象
+
+## 构建
+
+需要 Java 21。
 
 ```powershell
 mvn package
 ```
 
-The packaged jar is written to `target/`.
+产物输出到：
+
+`target/amenu-1.0.0-SNAPSHOT-shaded.jar`

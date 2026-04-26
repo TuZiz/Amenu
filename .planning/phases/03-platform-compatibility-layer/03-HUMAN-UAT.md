@@ -3,7 +3,7 @@ status: partial
 phase: 03-platform-compatibility-layer
 source: [03-VERIFICATION.md]
 started: 2026-04-02T18:26:30+08:00
-updated: 2026-04-02T18:26:30+08:00
+updated: 2026-04-02T18:42:00+08:00
 ---
 
 ## Current Test
@@ -25,6 +25,7 @@ evidence: Ran `.smoke/folia-smoke.ps1` against `D:\codex\Amenu\.smoke\folia-boot
 ### 3. Live `/amenu` navigation and prompt pass
 expected: On a real Paper/Folia player session, `/amenu` opens, bundled menus navigate correctly, one prompt submit/cancel flow completes, and reload/stop leaves logs clean.
 result: pending
+evidence: A live server run on 2026-04-02 surfaced `NoSuchMethodError: Bukkit.createInventory(InventoryHolder, int, Component)` while executing `/amenu open`. The runtime path was patched to use reflection-first component titles with legacy-string fallback via `InventoryAccess`, and the fix was revalidated by `mvn test` plus `mvn package`. A fresh in-game retest is still required against the new shaded jar.
 
 ## Summary
 
@@ -37,4 +38,11 @@ blocked: 0
 
 ## Gaps
 
-- A real player interaction pass is still needed for `/amenu` navigation plus one prompt submit/cancel cycle on Paper or Folia.
+- A real player interaction pass is still needed for `/amenu` navigation plus one prompt submit/cancel cycle on Paper or Folia using the rebuilt shaded jar after the inventory-title compatibility fix.
+- The recommended live verification path is now:
+  1. `/amenu`
+  2. open the pagination showcase
+  3. `/amenu open admin`
+  4. click `Give Browser Tool`
+  5. right-click the granted compass
+  6. verify the bound menu path opens `main`

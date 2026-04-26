@@ -29,6 +29,11 @@ class BukkitPlatformScheduler(private val plugin: JavaPlugin) : PlatformSchedule
         Bukkit.getScheduler().runTask(plugin, task)
     }
 
+    override fun runLaterAsync(delayTicks: Long, task: Runnable): TaskHandle {
+        val scheduledTask = Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, task, delayTicks.coerceAtLeast(0L))
+        return BukkitTaskHandle(scheduledTask)
+    }
+
     override fun runLaterFor(player: Player, delayTicks: Long, task: Runnable): TaskHandle {
         val scheduledTask = Bukkit.getScheduler().runTaskLater(plugin, task, delayTicks.coerceAtLeast(0L))
         return BukkitTaskHandle(scheduledTask)

@@ -51,6 +51,76 @@ class AMenuCommandTest {
         server.scheduler.waitAsyncEventsFinished()
     }
 
+    private fun writeMenu(menuId: String, yaml: String) {
+        val menuFile = File(plugin.dataFolder, "menus/$menuId.yml")
+        menuFile.parentFile.mkdirs()
+        menuFile.writeText(yaml.trimIndent() + System.lineSeparator(), Charsets.UTF_8)
+        plugin.menuRepository.loadMenus()
+    }
+
+    private fun installDefaultMenu() {
+        writeMenu(
+            "menu",
+            """
+            title: "Menu"
+            Shape:
+              - "#A#######"
+            buttons:
+              "A":
+                material: COMPASS
+                name: "Menu"
+            """,
+        )
+    }
+
+    private fun installBrowserBindingMenus() {
+        installDefaultMenu()
+        writeMenu(
+            "showcase",
+            """
+            title: "Showcase"
+            Shape:
+              - "#########"
+              - "H#B######"
+              - "#########"
+            bindings:
+              browser-compass:
+                type: ITEM
+                material: COMPASS
+                actions:
+                  - RIGHT_CLICK_AIR
+            buttons:
+              "H":
+                material: BOOKSHELF
+                name: "History"
+                click:
+                  - "menu: history"
+              "B":
+                material: COMPASS
+                name: "Binding"
+                conditions:
+                  placeholder-equals:
+                    binding-type: item
+                click:
+                  - "message: bound-{binding-id}-{binding-action}"
+            """,
+        )
+        writeMenu(
+            "history",
+            """
+            title: "History"
+            Shape:
+              - "#########"
+              - "#A#######"
+              - "#########"
+            buttons:
+              "A":
+                material: PAPER
+                name: "History"
+            """,
+        )
+    }
+
     @BeforeEach
     fun setUp() {
         server = MockBukkit.mock()
@@ -64,10 +134,26 @@ class AMenuCommandTest {
     }
 
     @Test
-    fun opens_default_and_named_menu() {
+    fun opens_explicit_menus_and_does_not_open_default_menu() {
         grantOpenPermission()
+        installDefaultMenu()
+        writeMenu(
+            "history",
+            """
+            title: "History"
+            Shape:
+              - "#A#######"
+            buttons:
+              "A":
+                material: PAPER
+                name: "History"
+            """,
+        )
         assertTrue(server.dispatchCommand(player, "amenu"))
+        assertNull(player.openInventory.topInventory?.holder as? MenuHolder)
+        assertNotNull(player.nextComponentMessage())
 
+        assertTrue(server.dispatchCommand(player, "amenu open menu"))
         val defaultHolder = player.openInventory.topInventory.holder as? MenuHolder
         assertNotNull(defaultHolder)
         assertEquals("menu", defaultHolder!!.menuId)
@@ -80,28 +166,21 @@ class AMenuCommandTest {
     }
 
     @Test
-    fun reload_keeps_bundled_command_entrypoints_available() {
+    fun reload_keeps_bundled_templates_available_without_auto_seeded_menu() {
         player.addAttachment(plugin, "amenu.admin", true)
         grantOpenPermission()
         player.recalculatePermissions()
 
         assertTrue(server.dispatchCommand(player, "amenu reload"))
         assertNotNull(player.nextComponentMessage())
-        assertNotNull(plugin.menuRepository.menu("menu"))
-        assertNotNull(plugin.menuRepository.menu("showcase"))
-        assertNotNull(plugin.menuRepository.menu("history"))
-        assertNotNull(plugin.menuRepository.menu("admin"))
-        assertNotNull(plugin.menuRepository.menu("runtime"))
+        assertNull(plugin.menuRepository.menu("menu"))
+        assertFalse(File(plugin.dataFolder, "menus/menu.yml").isFile)
+        assertTrue(releasedTemplateFiles().isNotEmpty())
+        assertTrue(releasedTemplateFiles().none { plugin.menuRepository.menu(it.nameWithoutExtension) != null })
 
         assertTrue(server.dispatchCommand(player, "amenu"))
-        val defaultHolder = player.openInventory.topInventory.holder as? MenuHolder
-        assertNotNull(defaultHolder)
-        assertEquals("menu", defaultHolder!!.menuId)
-
-        assertTrue(server.dispatchCommand(player, "amenu open history"))
-        val namedHolder = player.openInventory.topInventory.holder as? MenuHolder
-        assertNotNull(namedHolder)
-        assertEquals("history", namedHolder!!.menuId)
+        assertNull(player.openInventory.topInventory?.holder as? MenuHolder)
+        assertNotNull(player.nextComponentMessage())
     }
 
     @Test
@@ -109,6 +188,7 @@ class AMenuCommandTest {
         player.addAttachment(plugin, "amenu.admin", true)
         grantOpenPermission()
         player.recalculatePermissions()
+        installDefaultMenu()
 
         val menuFile = File(plugin.dataFolder, "menus/menu.yml")
         val original = menuFile.readText(Charsets.UTF_8)
@@ -120,7 +200,7 @@ class AMenuCommandTest {
         assertTrue(message.isNotBlank())
         assertNotNull(plugin.menuRepository.menu("menu"))
 
-        assertTrue(server.dispatchCommand(player, "amenu"))
+        assertTrue(server.dispatchCommand(player, "amenu open menu"))
         val defaultHolder = player.openInventory.topInventory.holder as? MenuHolder
         assertNotNull(defaultHolder)
         assertEquals("menu", defaultHolder!!.menuId)
@@ -135,12 +215,29 @@ class AMenuCommandTest {
         val completions = command.tabCompleter!!.onTabComplete(player, command, "amenu", arrayOf(""))!!
         assertTrue("reload" in completions)
         assertTrue("open" in completions)
-        assertTrue("give" !in completions)
+        assertTrue("give" in completions)
         assertTrue("sync-bundled" !in completions)
     }
 
     @Test
+    fun give_creates_item_that_matches_loaded_item_binding() {
+        installBrowserBindingMenus()
+        player.addAttachment(plugin, "amenu.admin", true)
+        player.recalculatePermissions()
+
+        assertTrue(server.dispatchCommand(player, "amenu give browser-compass"))
+
+        val item = player.inventory.itemInMainHand
+        assertEquals(Material.COMPASS, item.type)
+        assertEquals("browser-compass", BindingItemAccess.read(plugin, item.itemMeta))
+
+        interactWith(item, Action.RIGHT_CLICK_AIR)
+        assertEquals("showcase", (player.openInventory.topInventory.holder as? MenuHolder)?.menuId)
+    }
+
+    @Test
     fun command_entrypoint_remains_canonical_even_with_item_bindings() {
+        installBrowserBindingMenus()
         val compass = ItemStack(Material.COMPASS)
         val meta = compass.itemMeta!!
         BindingItemAccess.write(plugin, meta, "browser-compass")
@@ -154,7 +251,7 @@ class AMenuCommandTest {
         assertEquals("showcase", boundHolder!!.menuId)
 
         grantOpenPermission()
-        assertTrue(server.dispatchCommand(player, "amenu"))
+        assertTrue(server.dispatchCommand(player, "amenu open menu"))
         val commandHolder = player.openInventory.topInventory.holder as? MenuHolder
         assertNotNull(commandHolder)
         assertEquals("menu", commandHolder!!.menuId)
@@ -162,6 +259,7 @@ class AMenuCommandTest {
 
     @Test
     fun direct_command_open_requires_permission_but_bindings_and_internal_navigation_do_not() {
+        installBrowserBindingMenus()
         assertTrue(server.dispatchCommand(player, "amenu"))
         assertNull(player.openInventory.topInventory?.holder as? MenuHolder)
         assertNotNull(player.nextComponentMessage())
@@ -236,39 +334,46 @@ class AMenuCommandTest {
         val completions = command.tabCompleter!!.onTabComplete(player, command, "amenu", arrayOf("open", ""))!!
 
         assertTrue("topup" in completions)
-        assertTrue("menu" in completions)
+        assertFalse("menu" in completions)
         assertFalse("points/topup" in completions)
         assertFalse(completions.any { it.contains('/') })
     }
 
     @Test
-    fun deleted_bundled_menu_is_not_restored_after_initial_bootstrap() {
-        val menuFile = File(plugin.dataFolder, "menus/menu.yml")
-        assertTrue(menuFile.exists())
-        assertTrue(menuFile.delete())
+    fun deleted_bundled_template_is_not_restored_after_initial_bootstrap() {
+        val templateFile = releasedTemplateFiles().first()
+        assertTrue(templateFile.exists())
+        assertTrue(templateFile.delete())
 
         val bootstrap = AMenuPlugin::class.java.getDeclaredMethod("bootstrapFiles")
         bootstrap.isAccessible = true
         bootstrap.invoke(plugin)
 
-        assertFalse(menuFile.exists())
+        assertFalse(templateFile.exists())
     }
 
     @Test
-    fun existing_data_folder_without_marker_does_not_reextract_bundled_menus() {
-        val menuFile = File(plugin.dataFolder, "menus/menu.yml")
+    fun existing_data_folder_without_marker_does_not_reextract_bundled_templates() {
+        val templateFile = releasedTemplateFiles().first()
         val markerFile = File(plugin.dataFolder, ".bundled-menus-initialized")
-        assertTrue(menuFile.exists())
+        assertTrue(templateFile.exists())
         assertTrue(markerFile.exists())
-        assertTrue(menuFile.delete())
+        assertTrue(templateFile.delete())
         assertTrue(markerFile.delete())
 
         val bootstrap = AMenuPlugin::class.java.getDeclaredMethod("bootstrapFiles")
         bootstrap.isAccessible = true
         bootstrap.invoke(plugin)
 
-        assertFalse(menuFile.exists())
+        assertFalse(templateFile.exists())
         assertTrue(markerFile.exists())
+    }
+
+    private fun releasedTemplateFiles(): List<File> {
+        return File(plugin.dataFolder, "templates")
+            .listFiles { file -> file.isFile && file.extension.equals("yml", ignoreCase = true) }
+            ?.sortedBy { it.name }
+            .orEmpty()
     }
 
     @Test

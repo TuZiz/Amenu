@@ -15,10 +15,12 @@ class MenuRepository(
     private val menus = linkedMapOf<String, MenuDefinition>()
     private val menuLookup = linkedMapOf<String, MenuDefinition>()
 
+    fun menuFolder(): File = menuFolderFor(plugin.dataFolder)
+
     fun loadMenus(): MenuLoadReport {
         val parsedMenus = linkedMapOf<String, MenuDefinition>()
         val errors = mutableListOf<MenuLoadError>()
-        val menuFolder = File(plugin.dataFolder, "menus")
+        val menuFolder = menuFolder()
         if (!menuFolder.exists()) {
             menuFolder.mkdirs()
         }
@@ -75,6 +77,80 @@ class MenuRepository(
 
     fun listBindings(): List<MenuBindingDefinition> = menus.values.flatMap(MenuDefinition::bindings)
 
+    fun applyFileChanges(
+        upsertedFiles: Set<File>,
+        deletedFiles: Set<File>,
+    ): MenuLoadReport {
+        val menuFolder = menuFolder()
+        if (!menuFolder.exists()) {
+            menuFolder.mkdirs()
+        }
+
+        val errors = mutableListOf<MenuLoadError>()
+        val changedMenuIds = linkedSetOf<String>()
+        val reopenMenuIds = linkedSetOf<String>()
+        val removedMenuIds = linkedSetOf<String>()
+        val workingMenus = linkedMapOf<String, MenuDefinition>()
+        workingMenus.putAll(menus)
+        var hasMutation = false
+
+        deletedFiles.sortedBy { relativeMenuPath(menuFolder, it).lowercase(Locale.ROOT) }.forEach { file ->
+            val id = canonicalMenuId(menuFolder, file)
+            if (workingMenus.remove(id) != null) {
+                removedMenuIds += id
+                hasMutation = true
+            }
+        }
+
+        upsertedFiles.sortedBy { relativeMenuPath(menuFolder, it).lowercase(Locale.ROOT) }.forEach { file ->
+            if (!file.exists()) {
+                val id = canonicalMenuId(menuFolder, file)
+                if (workingMenus.remove(id) != null) {
+                    removedMenuIds += id
+                    hasMutation = true
+                }
+                return@forEach
+            }
+            runCatching {
+                parseMenuFile(menuFolder, file)
+            }.onSuccess { definition ->
+                val previous = workingMenus[definition.id]
+                workingMenus[definition.id] = definition
+                changedMenuIds += definition.id
+                if (previous != null && (previous.title != definition.title || previous.rows != definition.rows)) {
+                    reopenMenuIds += definition.id
+                }
+                hasMutation = true
+            }.onFailure { exception ->
+                errors += MenuLoadError(
+                    fileName = relativeMenuPath(menuFolder, file),
+                    message = exception.message ?: exception.javaClass.simpleName,
+                )
+                plugin.logger.log(Level.SEVERE, "Failed to load menu file ${relativeMenuPath(menuFolder, file)}: ${exception.message}", exception)
+            }
+        }
+
+        val applied = errors.isEmpty() && hasMutation
+        if (applied) {
+            menus.clear()
+            menus.putAll(workingMenus)
+            rebuildLookupTable()
+        }
+
+        val appliedChangedMenuIds = if (applied) changedMenuIds.toSet() else emptySet()
+        val appliedRemovedMenuIds = if (applied) removedMenuIds.toSet() else emptySet()
+        val appliedReopenMenuIds = if (applied) reopenMenuIds.toSet() else emptySet()
+        return MenuLoadReport(
+            scannedFiles = upsertedFiles.size + deletedFiles.size,
+            loadedMenus = appliedChangedMenuIds.size,
+            applied = applied,
+            errors = errors.toList(),
+            changedMenuIds = appliedChangedMenuIds,
+            removedMenuIds = appliedRemovedMenuIds,
+            reopenMenuIds = appliedReopenMenuIds,
+        )
+    }
+
     private fun loadMenuFile(
         menuFolder: File,
         file: File,
@@ -82,33 +158,9 @@ class MenuRepository(
         errors: MutableList<MenuLoadError>,
     ) {
         runCatching {
-            val yaml = YamlConfiguration.loadConfiguration(file)
-            val id = canonicalMenuId(menuFolder, file)
-            require(id.isNotBlank()) { "Menu id resolved from ${relativeMenuPath(menuFolder, file)} must not be blank" }
-            require(id !in parsedMenus) { "Duplicate menu id '$id' from ${relativeMenuPath(menuFolder, file)}" }
-            val parsedLayout = parseLayout(yaml)
-            val templates = loadTemplates(section(yaml, "templates", "Templates"))
-            val prompts = loadPrompts(section(yaml, "prompts", "Prompts")).toMutableMap()
-            val fill = parseIconStyle(section(yaml, "fill", "Fill"))
-            val pageRegions = loadPageRegions(section(yaml, "pages", "Pages"), templates, parsedLayout.symbols)
-            val buttons = loadButtons(
-                section(yaml, "buttons", "BUTTONS", "Buttons"),
-                templates,
-                prompts,
-                fill,
-                parsedLayout.symbols,
-            )
-            val bindings = loadBindings(id, section(yaml, "bindings", "Bindings"))
-            MenuDefinition(
-                id = id,
-                title = stringValue(yaml, "title", "Title") ?: id,
-                rows = parsedLayout.layout.size,
-                layout = parsedLayout.layout,
-                prompts = prompts.toMap(),
-                buttons = buttons,
-                pageRegions = pageRegions,
-                bindings = bindings,
-            )
+            val definition = parseMenuFile(menuFolder, file)
+            require(definition.id !in parsedMenus) { "Duplicate menu id '${definition.id}' from ${relativeMenuPath(menuFolder, file)}" }
+            definition
         }.onSuccess { definition ->
             parsedMenus[definition.id] = definition
         }.onFailure { exception ->
@@ -118,6 +170,39 @@ class MenuRepository(
             )
             plugin.logger.log(Level.SEVERE, "Failed to load menu file ${relativeMenuPath(menuFolder, file)}: ${exception.message}", exception)
         }
+    }
+
+    private fun parseMenuFile(
+        menuFolder: File,
+        file: File,
+    ): MenuDefinition {
+        require(file.exists() && file.isFile) { "Menu file ${relativeMenuPath(menuFolder, file)} does not exist" }
+        val yaml = YamlConfiguration.loadConfiguration(file)
+        val id = canonicalMenuId(menuFolder, file)
+        require(id.isNotBlank()) { "Menu id resolved from ${relativeMenuPath(menuFolder, file)} must not be blank" }
+        val parsedLayout = parseLayout(yaml)
+        val templates = loadTemplates(section(yaml, "templates", "Templates"))
+        val prompts = loadPrompts(section(yaml, "prompts", "Prompts")).toMutableMap()
+        val fill = parseIconStyle(section(yaml, "fill", "Fill"))
+        val pageRegions = loadPageRegions(section(yaml, "pages", "Pages"), templates, parsedLayout.symbols)
+        val buttons = loadButtons(
+            section(yaml, "buttons", "BUTTONS", "Buttons"),
+            templates,
+            prompts,
+            fill,
+            parsedLayout.symbols,
+        )
+        val bindings = loadBindings(id, section(yaml, "bindings", "Bindings"))
+        return MenuDefinition(
+            id = id,
+            title = stringValue(yaml, "title", "Title") ?: id,
+            rows = parsedLayout.layout.size,
+            layout = parsedLayout.layout,
+            prompts = prompts.toMap(),
+            buttons = buttons,
+            pageRegions = pageRegions,
+            bindings = bindings,
+        )
     }
 
     private fun buildLookupTable(parsedMenus: Map<String, MenuDefinition>): Map<String, MenuDefinition> {
@@ -143,6 +228,11 @@ class MenuRepository(
         return lookup
     }
 
+    private fun rebuildLookupTable() {
+        menuLookup.clear()
+        menuLookup.putAll(buildLookupTable(menus))
+    }
+
     private fun canonicalMenuId(
         menuFolder: File,
         file: File,
@@ -158,7 +248,7 @@ class MenuRepository(
         menuFolder: File,
         file: File,
     ): String {
-        return file.relativeTo(menuFolder).invariantSeparatorsPath
+        return normalizedRelativeMenuPath(menuFolder, file)
     }
 
     private fun normalizeMenuId(menuId: String): String {
@@ -172,7 +262,7 @@ class MenuRepository(
         }
 
         val rawLayout = stringList(section, "layout", "Layout")
-        val layout = normalizeLayout(rawLayout, section.getInt("rows", rawLayout.size.coerceAtLeast(3)))
+        val layout = normalizeLayout(rawLayout, rawLayout.size.coerceAtLeast(1))
         return ParsedLayout(layout, emptyMap())
     }
 
@@ -329,7 +419,7 @@ class MenuRepository(
         return ButtonStateDefinition(
             id = key,
             conditions = parseStateConditions(stateSection),
-            icon = if (hasIconOverride) baseStyle.merged(parseIconStyle(stateSection)).finalize() else null,
+            icon = if (hasIconOverride) mergeStateIcon(baseStyle, parseIconStyle(stateSection)) else null,
             actions = if (actionValues.isEmpty()) emptyList() else parseActionNodes(actionValues),
             permission = if (stateSection.contains("permission")) stateSection.getString("permission")?.takeIf { it.isNotBlank() } else null,
             visiblePermission = if (stateSection.contains("visible-permission")) {
@@ -371,7 +461,7 @@ class MenuRepository(
         return ButtonStateDefinition(
             id = id,
             conditions = parseStateConditions(stateYaml),
-            icon = if (hasIconOverride) baseStyle.merged(parseIconStyle(stateYaml)).finalize() else null,
+            icon = if (hasIconOverride) mergeStateIcon(baseStyle, parseIconStyle(stateYaml)) else null,
             actions = if (actionValues.isEmpty()) emptyList() else parseActionNodes(actionValues),
             permission = stateYaml.getString("permission")?.takeIf { it.isNotBlank() },
             visiblePermission = stateYaml.getString("visible-permission")?.takeIf { it.isNotBlank() },
@@ -432,6 +522,19 @@ class MenuRepository(
                 else -> null
             },
         )
+    }
+
+    private fun mergeStateIcon(
+        baseStyle: IconStyle,
+        stateStyle: IconStyle,
+    ): IconDefinition {
+        val merged = baseStyle.merged(stateStyle)
+        val icon = if (stateStyle.name != null && stateStyle.lore == null) {
+            merged.copy(lore = emptyList())
+        } else {
+            merged
+        }
+        return icon.finalize()
     }
 
     private fun parsePageRegion(
@@ -725,15 +828,11 @@ class MenuRepository(
             addAll(rawListValue(section, "actions", "click", "run"))
             if (nestedActions != null) {
                 addAll(rawListValue(nestedActions, "all"))
-                addAll(rawListValue(nestedActions, "left"))
-                addAll(rawListValue(nestedActions, "right"))
-                addAll(rawListValue(nestedActions, "shift-left"))
-                addAll(rawListValue(nestedActions, "shift-right"))
                 nestedActions.getConfigurationSection("all")?.let { addAll(rawListValue(it, "actions", "all")) }
-                nestedActions.getConfigurationSection("left")?.let { addAll(rawListValue(it, "actions", "all")) }
-                nestedActions.getConfigurationSection("right")?.let { addAll(rawListValue(it, "actions", "all")) }
-                nestedActions.getConfigurationSection("shift-left")?.let { addAll(rawListValue(it, "actions", "all")) }
-                nestedActions.getConfigurationSection("shift-right")?.let { addAll(rawListValue(it, "actions", "all")) }
+                addClickBucket(nestedActions, "left")
+                addClickBucket(nestedActions, "right")
+                addClickBucket(nestedActions, "shift-left")
+                addClickBucket(nestedActions, "shift-right")
             }
         }
     }
@@ -805,16 +904,28 @@ class MenuRepository(
         return buildList {
             addAll(rawListValue(section, "actions", "click", "run"))
             addAll(rawListValue(section, "all"))
-            addAll(rawListValue(section, "left"))
-            addAll(rawListValue(section, "right"))
-            addAll(rawListValue(section, "shift-left"))
-            addAll(rawListValue(section, "shift-right"))
             section.getConfigurationSection("all")?.let { addAll(rawListValue(it, "actions", "all")) }
-            section.getConfigurationSection("left")?.let { addAll(rawListValue(it, "actions", "all")) }
-            section.getConfigurationSection("right")?.let { addAll(rawListValue(it, "actions", "all")) }
-            section.getConfigurationSection("shift-left")?.let { addAll(rawListValue(it, "actions", "all")) }
-            section.getConfigurationSection("shift-right")?.let { addAll(rawListValue(it, "actions", "all")) }
+            addClickBucket(section, "left")
+            addClickBucket(section, "right")
+            addClickBucket(section, "shift-left")
+            addClickBucket(section, "shift-right")
         }
+    }
+
+    private fun MutableList<Any?>.addClickBucket(section: ConfigurationSection, bucket: String) {
+        val nodes = rawListValue(section, bucket).toMutableList()
+        section.getConfigurationSection(bucket)?.let { bucketSection ->
+            nodes.addAll(rawListValue(bucketSection, "actions", "all"))
+        }
+        if (nodes.isEmpty()) {
+            return
+        }
+        add(
+            linkedMapOf(
+                "condition" to "placeholder: click-type=$bucket",
+                "actions" to nodes,
+            ),
+        )
     }
 
     private fun parseTitleAction(raw: String): MenuAction.Title {
@@ -1150,6 +1261,22 @@ class MenuRepository(
     }
 }
 
+internal fun menuFolderFor(dataFolder: File): File {
+    return File(dataFolder, "menus").toPath().toAbsolutePath().normalize().toFile()
+}
+
+internal fun normalizedRelativeMenuPath(
+    menuFolder: File,
+    file: File,
+): String {
+    val basePath = menuFolder.toPath().toAbsolutePath().normalize()
+    val filePath = file.toPath().toAbsolutePath().normalize()
+    require(filePath.startsWith(basePath)) {
+        "Menu file $filePath is not inside menu folder $basePath"
+    }
+    return basePath.relativize(filePath).toString().replace(File.separatorChar, '/')
+}
+
 private data class ParsedLayout(
     val layout: List<String>,
     val symbols: Map<String, Char>,
@@ -1160,6 +1287,9 @@ data class MenuLoadReport(
     val loadedMenus: Int,
     val applied: Boolean,
     val errors: List<MenuLoadError>,
+    val changedMenuIds: Set<String> = emptySet(),
+    val removedMenuIds: Set<String> = emptySet(),
+    val reopenMenuIds: Set<String> = emptySet(),
 ) {
     val successful: Boolean
         get() = errors.isEmpty()

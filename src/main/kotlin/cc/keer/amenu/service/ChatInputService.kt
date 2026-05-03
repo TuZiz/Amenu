@@ -88,25 +88,18 @@ class ChatInputService(
         )
         sessions[player.uniqueId] = session
 
-        if (prompt.type != PromptType.CHAT) {
-            sessions.remove(player.uniqueId, session)
-            session.dispose()
-            val typeName = when (prompt.type) {
-                PromptType.SIGN -> "告示牌"
-                PromptType.ANVIL -> "铁砧"
-                else -> "输入"
-            }
-            menuService.sendRawMessage(player, "<yellow>${typeName}输入已下线，当前仅保留聊天输入。</yellow>")
-            return
-        }
-
         player.closeInventory()
         prompt.startMessages.forEach { line ->
             menuService.sendRawMessage(player, line, placeholders)
         }
 
-        if (supportsConversationCapture()) {
-            openChatPrompt(player, session)
+        when (prompt.type) {
+            PromptType.CHAT -> if (supportsConversationCapture()) {
+                openChatPrompt(player, session)
+            }
+
+            PromptType.SIGN -> openSignPrompt(player, session)
+            PromptType.ANVIL -> openAnvilPrompt(player, session)
         }
     }
 
@@ -323,10 +316,11 @@ class ChatInputService(
             renderPromptText(player, session.prompt.signLines.getOrNull(index).orEmpty(), session.placeholders)
         }
         val block = location.block
+        val originalBlockData = block.blockData.clone()
         block.setType(Material.OAK_SIGN, false)
         val sign = block.state as? Sign
         if (sign == null) {
-            block.setType(Material.AIR, false)
+            block.blockData = originalBlockData
             plugin.logger.warning(
                 "[AMenu] Failed to open sign prompt for ${player.name}: block at ${formatLocation(location)} is not a sign state."
             )
@@ -342,7 +336,7 @@ class ChatInputService(
         val runtime = InputRuntime.Sign(
             location = sign.location,
             initialLines = lines,
-            originalBlockData = block.blockData.clone(),
+            originalBlockData = originalBlockData,
         )
         session.runtime = runtime
         plugin.logger.info(
@@ -543,24 +537,6 @@ class ChatInputService(
         processSignSubmission(player, session, runtime, currentLines)
     }
 
-    private fun handleProtocolSignInput(player: Player, location: org.bukkit.Location, lines: List<String>) {
-        val session = sessions[player.uniqueId] ?: return
-        val runtime = session.runtime as? InputRuntime.Sign ?: return
-        val sameBlock = isSameBlock(location, runtime.location)
-        val nearbyBlock = isNearbyBlock(location, runtime.location, 8.0)
-        if (!sameBlock && !nearbyBlock) {
-            return
-        }
-        if (!sessions.remove(player.uniqueId, session)) {
-            return
-        }
-        plugin.logger.info(
-            "[AMenu] Protocol sign input captured for ${player.name} at ${formatLocation(location)} " +
-                "lines=${lines.joinToString("|")}"
-        )
-        processSignSubmission(player, session, runtime, lines)
-    }
-
     private fun processSignSubmission(
         player: Player,
         session: InputSession,
@@ -599,19 +575,6 @@ class ChatInputService(
             return null
         }
         return nonBlankChangedLines.joinToString("\n").trim()
-    }
-
-    private fun handleProtocolAnvilRename(player: Player, text: String) {
-        val session = sessions[player.uniqueId] ?: return
-        val runtime = session.runtime as? InputRuntime.Anvil ?: return
-        val normalized = normalizeAnvilText(text, runtime)
-        runtime.currentText = normalized
-        val view = player.openInventory
-        if (view.topInventory.holder !== runtime.holder) {
-            return
-        }
-        applyAnvilViewState(view)
-        plugin.logger.info("[AMenu] Protocol anvil rename captured for ${player.name}: raw='$text' normalized='$normalized'")
     }
 
     private fun pollAnvilInput(playerId: UUID, expectedSession: InputSession) {

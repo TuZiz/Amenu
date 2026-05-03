@@ -10,7 +10,7 @@ softdepend: [PlaceholderAPI, PlayerPoints]
 commands:
   amenu:
     description: 打开或管理 AMenu。
-    usage: /amenu [reload|open <menuId>]
+    usage: /amenu [reload|open <menuId>|give <bindingId>]
     aliases: [skinmenu, menu]
 
 permissions:

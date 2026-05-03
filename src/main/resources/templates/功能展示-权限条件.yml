@@ -1,0 +1,56 @@
+title: "<gold><bold>功能展示 - 权限条件</bold></gold>"
+
+Shape:
+  - "#########"
+  - "#`权限按钮`#`条件显示`#`状态图标`##"
+  - "#########"
+
+BUTTONS:
+  "#":
+    material: YELLOW_STAINED_GLASS_PANE
+    name: " "
+
+  "权限按钮":
+    material: SHIELD
+    name: "<gold><bold>权限按钮</bold></gold>"
+    lore:
+      - "<gray>点击动作里直接写 condition 分支。</gray>"
+      - "<gray>没有权限时执行 deny 分支。</gray>"
+    click:
+      - condition: "perm *amenu.demo.use"
+        actions:
+          - "tell: <green>权限检查通过。</green>"
+          - "title: <green>权限通过</green>||<gray>actions 已执行</gray>"
+        deny:
+          - "tell: <red>你没有 amenu.demo.use 权限。</red>"
+          - "title: <red>权限不足</red>||<gray>deny 已执行</gray>"
+
+  "条件显示":
+    material: REDSTONE_TORCH
+    name: "<yellow><bold>条件显示</bold></yellow>"
+    lore:
+      - "<gray>条件判断写在 click 的 condition 对象里。</gray>"
+      - "<gray>不再展示 conditions 段。</gray>"
+    click:
+      - condition: "perm *amenu.demo.visible"
+        actions:
+          - "tell: <yellow>你满足这个按钮的条件。</yellow>"
+        deny:
+          - "tell: <red>你还没有 amenu.demo.visible。</red>"
+
+  "状态图标":
+    material: LEVER
+    name: "<aqua><bold>状态图标</bold></aqua>"
+    lore:
+      - "<gray>状态图标使用 icons 列表。</gray>"
+      - "<gray>每个图标用 condition 判断。</gray>"
+    icons:
+      - condition: "perm *amenu.demo.state"
+        material: EMERALD
+        name: "<green><bold>状态: 已解锁</bold></green>"
+        lore:
+          - "<gray>权限满足时显示这个状态。</gray>"
+        click:
+          - "tell: <green>已解锁状态按钮已点击。</green>"
+    click:
+      - "tell: <aqua>状态按钮已点击。</aqua>"

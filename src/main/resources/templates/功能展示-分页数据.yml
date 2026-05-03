@@ -1,0 +1,77 @@
+title: "<blue><bold>功能展示 - 分页数据</bold></blue>"
+
+Shape:
+  - "#########"
+  - "#`列表项``列表项``列表项``列表项``列表项``列表项``列表项`#"
+  - "#`上一页`##`刷新分页`##`下一页`#"
+
+BUTTONS:
+  "#":
+    material: BLUE_STAINED_GLASS_PANE
+    name: " "
+
+  "上一页":
+    material: ARROW
+    name: "<yellow><bold>上一页</bold></yellow>"
+    click:
+      - "page: prev list"
+
+  "下一页":
+    material: ARROW
+    name: "<yellow><bold>下一页</bold></yellow>"
+    click:
+      - "page: next list"
+
+  "刷新分页":
+    material: SUNFLOWER
+    name: "<green><bold>刷新分页</bold></green>"
+    click:
+      - "page: refresh list"
+
+pages:
+  list:
+    symbol: "列表项"
+    provider:
+      type: entries
+      cache:
+        ttl: 20
+    loading:
+      material: CLOCK
+      name: "<yellow><bold>正在加载...</bold></yellow>"
+    empty:
+      material: BARRIER
+      name: "<red><bold>没有条目</bold></red>"
+    error:
+      material: RED_STAINED_GLASS_PANE
+      name: "<red><bold>加载失败</bold></red>"
+    entries:
+      Shape布局:
+        material: MAP
+        name: "<green><bold>Shape 布局</bold></green>"
+        lore:
+          - "<gray>条目 1 / Page {page}</gray>"
+      动作执行:
+        material: REPEATER
+        name: "<yellow><bold>动作执行</bold></yellow>"
+        lore:
+          - "<gray>条目 2 / Page {page}</gray>"
+      权限条件:
+        material: SHIELD
+        name: "<gold><bold>权限条件</bold></gold>"
+        lore:
+          - "<gray>条目 3 / Page {page}</gray>"
+      聊天输入:
+        material: WRITABLE_BOOK
+        name: "<light_purple><bold>聊天输入</bold></light_purple>"
+        lore:
+          - "<gray>条目 4 / Page {page}</gray>"
+      动态刷新:
+        material: CLOCK
+        name: "<aqua><bold>动态刷新</bold></aqua>"
+        lore:
+          - "<gray>条目 5 / Page {page}</gray>"
+      绑定入口:
+        material: COMPASS
+        name: "<blue><bold>绑定入口</bold></blue>"
+        lore:
+          - "<gray>条目 6 / Page {page}</gray>"

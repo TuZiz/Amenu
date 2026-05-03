@@ -1,0 +1,60 @@
+title: "<aqua><bold>功能展示 - 刷新绑定</bold></aqua>"
+
+Shape:
+  - "#########"
+  - "#`按钮刷新`#`物品绑定`#`命令绑定`##"
+  - "#########"
+
+bindings:
+  demo-clock:
+    type: ITEM
+    material: CLOCK
+    name: "<aqua><bold>AMenu 功能展示钟</bold></aqua>"
+    actions:
+      - RIGHT_CLICK_AIR
+      - RIGHT_CLICK_BLOCK
+    placeholders:
+      source: demo-clock
+
+  demo-command:
+    type: COMMAND
+    command: "amenu-demo"
+
+BUTTONS:
+  "#":
+    material: CYAN_STAINED_GLASS_PANE
+    name: " "
+
+  "按钮刷新":
+    update: 4
+    material: CLOCK
+    name: "<aqua><bold>按钮级刷新</bold></aqua>"
+    lore:
+      - "<gray>update: 4 表示每 4 tick 刷新按钮。</gray>"
+      - "<gray>适合 PlaceholderAPI 倒计时。</gray>"
+      - "<dark_gray>%server_time_HH:mm:ss%</dark_gray>"
+    click:
+      - "tell: <aqua>这个按钮支持按钮级刷新。</aqua>"
+
+  "物品绑定":
+    material: COMPASS
+    name: "<blue><bold>物品绑定</bold></blue>"
+    lore:
+      - "<gray>绑定 ID: demo-clock</gray>"
+      - "<gray>右键指定物品可打开菜单。</gray>"
+      - "<dark_gray>来源: {source}</dark_gray>"
+    click:
+      - condition: "placeholder: binding-type=item"
+        actions:
+          - "tell: <blue>由物品绑定打开: {binding-id}</blue>"
+        deny:
+          - "tell: <gray>这个按钮在物品绑定打开时会显示绑定上下文。</gray>"
+
+  "命令绑定":
+    material: COMMAND_BLOCK
+    name: "<green><bold>命令绑定</bold></green>"
+    lore:
+      - "<gray>bindings.command 可注册快捷入口。</gray>"
+      - "<gray>示例命令: /amenu-demo</gray>"
+    click:
+      - "tell: <green>命令绑定展示。</green>"

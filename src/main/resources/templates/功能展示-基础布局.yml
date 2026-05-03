@@ -1,0 +1,39 @@
+title: "<green><bold>功能展示 - 基础布局</bold></green>"
+
+Shape:
+  - "#########"
+  - "#`Shape 布局`#`按钮映射`#`边框按钮`#`复制加载`#"
+  - "#########"
+
+BUTTONS:
+  "#":
+    material: GRAY_STAINED_GLASS_PANE
+    name: " "
+
+  "Shape 布局":
+    material: MAP
+    name: "<green><bold>Shape 布局</bold></green>"
+    lore:
+      - "<gray>Shape 每一行代表菜单的一行。</gray>"
+      - "<gray>反引号里的中文名称就是按钮 ID。</gray>"
+
+  "按钮映射":
+    material: ITEM_FRAME
+    name: "<yellow><bold>按钮映射</bold></yellow>"
+    lore:
+      - "<gray>BUTTONS 下直接写同名中文按钮。</gray>"
+      - "<gray>不需要 A/B/C 这种旧符号。</gray>"
+
+  "边框按钮":
+    material: LIME_STAINED_GLASS_PANE
+    name: "<aqua><bold>边框按钮</bold></aqua>"
+    lore:
+      - "<gray># 只是一个普通按钮。</gray>"
+      - "<gray>不再使用 Fill 段。</gray>"
+
+  "复制加载":
+    material: CHEST
+    name: "<light_purple><bold>复制即用</bold></light_purple>"
+    lore:
+      - "<gray>把这个文件复制到 menus/ 目录。</gray>"
+      - "<gray>插件会自动加载这个菜单。</gray>"

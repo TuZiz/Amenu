@@ -6,6 +6,7 @@ import cc.keer.amenu.util.AdventureAccess
 import cc.keer.amenu.util.TextFormatter
 import org.bukkit.Material
 import org.bukkit.event.block.Action
+import org.bukkit.event.inventory.ClickType
 import org.bukkit.inventory.ItemStack
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
@@ -299,11 +300,11 @@ class MenuRuntimeActionTest : MenuPluginTestHarness() {
     }
 
     @Test
-    fun conditional_purchase_actions_support_check_papi_take_point_title_and_tell_aliases() {
+    fun conditional_actions_support_check_papi_take_point_title_and_tell_aliases() {
         writeMenu(
-            "purchase-menu",
+            "conditional-menu",
             """
-            title: "Purchase Menu"
+            title: "Conditional Menu"
             layout:
               - "#########"
               - "#F#######"
@@ -314,27 +315,28 @@ class MenuRuntimeActionTest : MenuPluginTestHarness() {
             buttons:
               "F":
                 material: FEATHER
-                name: "Flight"
+                name: "Conditional"
                 click:
                   - condition: "check papi *{coins} >= *30"
                     actions:
-                      - "take-point: 30"
-                      - "console: lp user %player_name% permission set cmi.command.fly true"
-                      - "title: &a&l飞行权限激活||&7购买成功"
-                      - "tell: &a飞行权限购买成功"
                       - "close"
+                      - "take-point: 30"
+                      - "console: example-console grant %player_name% example.permission"
+                      - "title: &a&lAction activated||&7Action success"
+                      - "tell: &aAction success"
                     deny:
-                      - "tell: &c星辰不足"
+                      - "close"
+                      - "tell: &cCondition not met"
             """,
         )
 
         val records = mutableListOf<String>()
         registerRecordingCommand("points", records)
-        registerRecordingCommand("lp", records)
+        registerRecordingCommand("example-console", records)
 
         plugin.menuService.openMenu(
             player,
-            "purchase-menu",
+            "conditional-menu",
             placeholders = mapOf("coins" to "40"),
             navigation = cc.keer.amenu.service.NavigationMode.ROOT,
         )
@@ -343,32 +345,32 @@ class MenuRuntimeActionTest : MenuPluginTestHarness() {
         assertEquals(
             listOf(
                 "CONSOLE|points|take Tester 30 -s",
-                "CONSOLE|lp|user %player_name% permission set cmi.command.fly true",
+                "CONSOLE|example-console|grant %player_name% example.permission",
             ),
             records,
         )
-        assertEquals("飞行权限购买成功", nextPlainMessage())
+        assertEquals("Action success", nextPlainMessage())
         assertNull(currentMenuId())
 
         records.clear()
         plugin.menuService.openMenu(
             player,
-            "purchase-menu",
+            "conditional-menu",
             placeholders = mapOf("coins" to "10"),
             navigation = cc.keer.amenu.service.NavigationMode.ROOT,
         )
         clickCurrent('F')
 
         assertTrue(records.isEmpty())
-        assertEquals("星辰不足", nextPlainMessage())
-        assertEquals("purchase-menu", currentMenuId())
+        assertEquals("Condition not met", nextPlainMessage())
+        assertNull(currentMenuId())
     }
     @Test
     fun take_point_falls_back_to_legacy_playerpoints_command_when_points_alias_is_missing() {
         writeMenu(
-            "purchase-menu-legacy",
+            "conditional-menu-legacy",
             """
-            title: "Purchase Menu"
+            title: "Conditional Menu"
             layout:
               - "#########"
               - "#F#######"
@@ -379,7 +381,7 @@ class MenuRuntimeActionTest : MenuPluginTestHarness() {
             buttons:
               "F":
                 material: FEATHER
-                name: "Flight"
+                name: "Conditional"
                 click:
                   - condition: "check papi *{coins} >= *30"
                     actions:
@@ -392,12 +394,49 @@ class MenuRuntimeActionTest : MenuPluginTestHarness() {
 
         plugin.menuService.openMenu(
             player,
-            "purchase-menu-legacy",
+            "conditional-menu-legacy",
             placeholders = mapOf("coins" to "40"),
             navigation = cc.keer.amenu.service.NavigationMode.ROOT,
         )
         clickCurrent('F')
 
         assertEquals(listOf("CONSOLE|playerpoints|take Tester 30 -s"), records)
+    }
+
+    @Test
+    fun nested_click_buckets_execute_only_for_matching_click_type() {
+        writeMenu(
+            "click-buckets",
+            """
+            title: "Click Buckets"
+            Shape:
+              - "#A#######"
+            buttons:
+              "A":
+                material: STONE_BUTTON
+                name: "Buckets"
+                actions:
+                  all:
+                    - "message: common"
+                  left:
+                    - "message: left"
+                  right:
+                    - "message: right"
+                  shift-left:
+                    - "message: shift-left"
+            """,
+        )
+
+        plugin.menuService.handleClick(player, "click-buckets", slotOf("click-buckets", 'A'), ClickType.RIGHT)
+
+        assertEquals("common", nextPlainMessage())
+        assertEquals("right", nextPlainMessage())
+        assertNull(nextPlainMessage())
+
+        plugin.menuService.handleClick(player, "click-buckets", slotOf("click-buckets", 'A'), ClickType.SHIFT_LEFT)
+
+        assertEquals("common", nextPlainMessage())
+        assertEquals("shift-left", nextPlainMessage())
+        assertNull(nextPlainMessage())
     }
 }

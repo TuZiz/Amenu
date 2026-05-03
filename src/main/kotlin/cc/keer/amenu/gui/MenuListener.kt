@@ -23,7 +23,7 @@ class MenuListener(
         }
 
         val player = event.whoClicked as? Player ?: return
-        menuService.handleClick(player, holder.menuId, event.slot)
+        menuService.handleClick(player, holder.menuId, event.slot, event.click)
     }
 
     @EventHandler

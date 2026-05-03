@@ -28,6 +28,7 @@ import net.kyori.adventure.title.Title
 import org.bukkit.Sound
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
+import org.bukkit.event.inventory.ClickType
 import org.bukkit.inventory.Inventory
 import org.bukkit.inventory.ItemStack
 import java.time.Duration
@@ -66,6 +67,36 @@ class MenuService(
         providerCache.clear()
     }
 
+    fun reloadSettings(newSettings: PluginSettings) {
+        settings = newSettings
+    }
+
+    fun handleMenuDefinitionsChanged(
+        changedMenuIds: Set<String>,
+        reopenMenuIds: Set<String>,
+        removedMenuIds: Set<String>,
+    ) {
+        if (changedMenuIds.isEmpty() && removedMenuIds.isEmpty()) {
+            return
+        }
+
+        plugin.server.onlinePlayers.forEach { player ->
+            runForPlayer(player) {
+                cleanupRemovedMenus(player, removedMenuIds)
+                val current = currentMenuId(player) ?: return@runForPlayer
+                if (current !in changedMenuIds) {
+                    return@runForPlayer
+                }
+                if (current in reopenMenuIds) {
+                    val placeholders = menuStates[player.uniqueId]?.get(current)?.placeholders?.toMap().orEmpty()
+                    openMenuInternal(player, current, placeholders, NavigationMode.NONE)
+                } else {
+                    renderOpenMenuIfCurrent(player, current)
+                }
+            }
+        }
+    }
+
     fun shutdown() {
         dynamicRefreshController.cancelAll()
         pendingMenuOpens.values.forEach(cc.keer.amenu.platform.TaskHandle::cancel)
@@ -92,14 +123,6 @@ class MenuService(
         cancelPendingMenuOpen(player.uniqueId)
         menuStates.remove(player.uniqueId)
         history.remove(player.uniqueId)
-    }
-
-    fun openDefaultMenu(player: Player) {
-        runForPlayer(player) {
-            cancelPendingMenuOpen(player.uniqueId)
-            clearHistory(player)
-            openMenuInternal(player, settings.defaultMenuId, emptyMap(), NavigationMode.ROOT)
-        }
     }
 
     fun openMenu(
@@ -135,9 +158,9 @@ class MenuService(
         }
     }
 
-    fun handleClick(player: Player, menuId: String, slot: Int) {
+    fun handleClick(player: Player, menuId: String, slot: Int, clickType: ClickType = ClickType.LEFT) {
         runForPlayer(player) {
-            handleClickInternal(player, menuId, slot)
+            handleClickInternal(player, menuId, slot, clickType)
         }
     }
 
@@ -251,10 +274,10 @@ class MenuService(
         syncDynamicRefresh(player, menu)
     }
 
-    private fun handleClickInternal(player: Player, menuId: String, slot: Int) {
+    private fun handleClickInternal(player: Player, menuId: String, slot: Int, clickType: ClickType) {
         val menu = repository.menu(menuId) ?: return
         val state = menuStates[player.uniqueId]?.get(menu.id)
-        val placeholders = mergedPlaceholders(player, state)
+        val placeholders = mergedPlaceholders(player, state) + clickPlaceholders(clickType)
         val button = menu.buttonAt(slot)?.let { resolveButton(player, it, placeholders) }
         if (button != null) {
             if (button.visiblePermission != null && !player.hasPermission(button.visiblePermission)) {
@@ -272,14 +295,20 @@ class MenuService(
             return
         }
 
-        handlePageRegionClick(player, menu, slot, state)
+        handlePageRegionClick(player, menu, slot, state, clickType)
     }
 
-    private fun handlePageRegionClick(player: Player, menu: MenuDefinition, slot: Int, state: MenuViewState?) {
+    private fun handlePageRegionClick(
+        player: Player,
+        menu: MenuDefinition,
+        slot: Int,
+        state: MenuViewState?,
+        clickType: ClickType,
+    ) {
         val activeState = state ?: return
         val region = menu.pageRegionAt(slot) ?: return
         val resolved = resolvePageEntry(player, activeState, menu, region, slot) ?: return
-        executeActions(player, menu.id, resolved.entry.actions, resolved.placeholders)
+        executeActions(player, menu.id, resolved.entry.actions, resolved.placeholders + clickPlaceholders(clickType))
     }
 
     private fun executeAction(
@@ -387,7 +416,11 @@ class MenuService(
         if (stack != null && stack.isEmpty()) {
             history.remove(player.uniqueId)
         }
-        openMenuInternal(player, previous ?: settings.defaultMenuId, placeholders, NavigationMode.NONE)
+        if (previous == null) {
+            player.closeInventory()
+            return
+        }
+        openMenuInternal(player, previous, placeholders, NavigationMode.NONE)
     }
 
     private fun currentMenuId(player: Player): String? {
@@ -400,6 +433,29 @@ class MenuService(
         menuStates.remove(player.uniqueId)
     }
 
+    private fun cleanupRemovedMenus(player: Player, removedMenuIds: Set<String>) {
+        if (removedMenuIds.isEmpty()) {
+            return
+        }
+
+        history.values.forEach { stack -> stack.removeAll(removedMenuIds) }
+        history.entries.removeIf { (_, stack) -> stack.isEmpty() }
+
+        removedMenuIds.forEach { menuId ->
+            dynamicRefreshController.cancelMenu(player.uniqueId, menuId)
+        }
+        val stateMap = menuStates[player.uniqueId]
+        removedMenuIds.forEach { menuId -> stateMap?.remove(menuId) }
+        if (stateMap != null && stateMap.isEmpty()) {
+            menuStates.remove(player.uniqueId)
+        }
+
+        val current = currentMenuId(player) ?: return
+        if (current in removedMenuIds) {
+            player.closeInventory()
+        }
+    }
+
     private fun defaultPlaceholders(player: Player): Map<String, String> {
         return mapOf("player" to player.name)
     }
@@ -410,6 +466,19 @@ class MenuService(
             ?.fold(emptyMap<String, String>()) { current, next -> current + next }
             ?: emptyMap()
         return defaultPlaceholders(player) + (state?.placeholders ?: emptyMap()) + dynamic
+    }
+
+    private fun clickPlaceholders(clickType: ClickType): Map<String, String> {
+        val normalized = when (clickType) {
+            ClickType.SHIFT_LEFT -> "shift-left"
+            ClickType.SHIFT_RIGHT -> "shift-right"
+            else -> when {
+                clickType.isLeftClick -> "left"
+                clickType.isRightClick -> "right"
+                else -> clickType.name.lowercase().replace('_', '-')
+            }
+        }
+        return mapOf("click-type" to normalized)
     }
 
     private fun resolveButton(

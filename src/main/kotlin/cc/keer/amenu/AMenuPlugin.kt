@@ -8,11 +8,14 @@ import cc.keer.amenu.platform.PlatformScheduler
 import cc.keer.amenu.platform.PlatformSchedulerFactory
 import cc.keer.amenu.service.ChatInputService
 import cc.keer.amenu.service.ConfigHotReloadService
+import cc.keer.amenu.service.MenuFileChanges
 import cc.keer.amenu.service.MenuService
 import cc.keer.amenu.service.provider.MenuProviderRegistry
 import cc.keer.amenu.service.provider.ProviderCache
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File
+import java.net.JarURLConnection
+import java.util.jar.JarFile
 
 open class AMenuPlugin : JavaPlugin() {
 
@@ -104,6 +107,57 @@ open class AMenuPlugin : JavaPlugin() {
         )
     }
 
+    fun reloadChangedFiles(changes: MenuFileChanges): ReloadReport {
+        if (changes.isEmpty) {
+            return ReloadReport(
+                menuReport = cc.keer.amenu.config.MenuLoadReport(
+                    scannedFiles = 0,
+                    loadedMenus = 0,
+                    applied = true,
+                    errors = emptyList(),
+                ),
+                configReloaded = false,
+            )
+        }
+
+        var configReloaded = false
+        if (changes.configChanged) {
+            reloadConfig()
+            settings = PluginSettings.from(config)
+            if (::menuService.isInitialized) {
+                menuService.reloadSettings(settings)
+            }
+            if (::chatInputService.isInitialized) {
+                chatInputService.reload(settings)
+            }
+            configReloaded = true
+        }
+
+        val menuReport = if (changes.upsertedMenus.isNotEmpty() || changes.deletedMenus.isNotEmpty()) {
+            menuRepository.applyFileChanges(changes.upsertedMenus, changes.deletedMenus).also { report ->
+                if (report.applied && ::menuService.isInitialized) {
+                    menuService.handleMenuDefinitionsChanged(
+                        changedMenuIds = report.changedMenuIds,
+                        reopenMenuIds = report.reopenMenuIds,
+                        removedMenuIds = report.removedMenuIds,
+                    )
+                }
+            }
+        } else {
+            cc.keer.amenu.config.MenuLoadReport(
+                scannedFiles = 0,
+                loadedMenus = 0,
+                applied = true,
+                errors = emptyList(),
+            )
+        }
+
+        return ReloadReport(
+            menuReport = menuReport,
+            configReloaded = configReloaded,
+        )
+    }
+
     fun handleReloadReport(
         report: ReloadReport,
         initiator: String,
@@ -157,7 +211,8 @@ open class AMenuPlugin : JavaPlugin() {
             return
         }
 
-        bundledMenuResources().forEach { path ->
+        val bundledResources = bundledMenuResources()
+        bundledResources.forEach { path ->
             saveBundledResource(path, false)
         }
         marker.parentFile?.mkdirs()
@@ -172,15 +227,76 @@ open class AMenuPlugin : JavaPlugin() {
     }
 
     private fun bundledMenuResources(): List<String> {
-        return listOf(
-            "menus/menu.yml",
-            "menus/pay.yml",
-            "menus/showcase.yml",
-            "menus/history.yml",
-            "menus/admin.yml",
-            "menus/runtime.yml",
-            "menus/skin.yml",
-        )
+        val fromCodeSource = bundledMenuResourcesFromCodeSource()
+        if (fromCodeSource.isNotEmpty()) {
+            return fromCodeSource
+        }
+        return bundledMenuResourcesFromClassLoader()
+    }
+
+    private fun bundledMenuResourcesFromCodeSource(): List<String> {
+        val location = runCatching {
+            File(javaClass.protectionDomain.codeSource.location.toURI())
+        }.getOrNull() ?: return emptyList()
+
+        return when {
+            location.isFile -> JarFile(location).use { jar ->
+                jar.entries().asSequence()
+                    .map { it.name }
+                    .filter(::isBundledMenuResource)
+                    .sorted()
+                    .toList()
+            }
+
+            location.isDirectory -> {
+                bundledResourceRoots().flatMap { rootName ->
+                    val root = File(location, rootName)
+                    if (!root.exists()) {
+                        emptyList()
+                    } else {
+                        root.walkTopDown()
+                            .filter { it.isFile && it.extension.equals("yml", ignoreCase = true) }
+                            .map { "$rootName/" + it.relativeTo(root).invariantSeparatorsPath }
+                            .toList()
+                    }
+                }.sorted()
+            }
+
+            else -> emptyList()
+        }
+    }
+
+    private fun bundledMenuResourcesFromClassLoader(): List<String> {
+        return bundledResourceRoots().flatMap { rootName ->
+            val url = javaClass.classLoader.getResource(rootName) ?: return@flatMap emptyList()
+            when (url.protocol) {
+                "file" -> {
+                    val root = File(url.toURI())
+                    root.walkTopDown()
+                        .filter { it.isFile && it.extension.equals("yml", ignoreCase = true) }
+                        .map { "$rootName/" + it.relativeTo(root).invariantSeparatorsPath }
+                        .toList()
+                }
+
+                "jar" -> {
+                    val connection = url.openConnection() as? JarURLConnection ?: return@flatMap emptyList()
+                    connection.jarFile.entries().asSequence()
+                        .map { it.name }
+                        .filter(::isBundledMenuResource)
+                        .toList()
+                }
+
+                else -> emptyList()
+            }
+        }.distinct().sorted()
+    }
+
+    private fun isBundledMenuResource(path: String): Boolean {
+        return bundledResourceRoots().any { root -> path.startsWith("$root/") } && path.endsWith(".yml", ignoreCase = true)
+    }
+
+    private fun bundledResourceRoots(): List<String> {
+        return listOf("templates")
     }
 }
 

@@ -1,0 +1,40 @@
+title: "<light_purple><bold>功能展示 - 聊天输入</bold></light_purple>"
+
+Shape:
+  - "#########"
+  - "###`输入昵称`#`输入说明`###"
+  - "#########"
+
+BUTTONS:
+  "#":
+    material: PURPLE_STAINED_GLASS_PANE
+    name: " "
+
+  "输入昵称":
+    material: WRITABLE_BOOK
+    name: "<light_purple><bold>输入昵称</bold></light_purple>"
+    lore:
+      - "<gray>点击后关闭菜单并捕获聊天输入。</gray>"
+      - "<gray>输入 cancel 可取消。</gray>"
+    click:
+      - "close"
+    input:
+      type: CHAT
+      timeout-seconds: 30
+      start:
+        - "<light_purple>请在聊天栏输入一个 2-16 位名称。</light_purple>"
+      validation:
+        matches: "[A-Za-z0-9_]{2,16}"
+      invalid:
+        - "tell: <red>格式错误，只能输入 2-16 位字母数字下划线。</red>"
+      cancel:
+        - "tell: <yellow>已取消输入。</yellow>"
+      submit:
+        - "tell: <green>你输入的是: {input}</green>"
+
+  "输入说明":
+    material: NAME_TAG
+    name: "<aqua><bold>输入说明</bold></aqua>"
+    lore:
+      - "<gray>input 可以写在按钮里。</gray>"
+      - "<gray>submit/cancel/invalid 都是动作执行。</gray>"

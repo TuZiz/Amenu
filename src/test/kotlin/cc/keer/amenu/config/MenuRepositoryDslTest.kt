@@ -30,98 +30,143 @@ class MenuRepositoryDslTest {
     }
 
     @Test
-    fun loads_reference_menu_layout_and_core_slots() {
-        val menu = plugin.menuRepository.menu("menu")
-
-        assertNotNull(menu)
-        assertEquals(6, menu!!.rows)
-        assertEquals(54, menu.size)
-        assertTrue(menu.title.isNotBlank())
-
-        val filler = menu.buttons['B']
-        assertNotNull(filler)
-        assertEquals("GRAY_STAINED_GLASS_PANE", filler!!.icon.materialName)
-        assertEquals(" ", filler.icon.name)
-
-        assertEquals("GOLDEN_HOE", menu.buttonAt(0)?.icon?.materialName)
-        assertEquals("RED_BED", menu.buttonAt(1)?.icon?.materialName)
-        assertEquals("GRAY_STAINED_GLASS_PANE", menu.buttonAt(2)?.icon?.materialName)
-        assertEquals("PLAYER_HEAD", menu.buttonAt(4)?.icon?.materialName)
-        assertEquals("CHEST_MINECART", menu.buttonAt(8)?.icon?.materialName)
-        assertEquals("COMPASS", menu.buttonAt(13)?.icon?.materialName)
-        assertEquals("DIAMOND", menu.buttonAt(15)?.icon?.materialName)
-        assertEquals("LAPIS_LAZULI", menu.buttonAt(19)?.icon?.materialName)
-        assertEquals("WRITABLE_BOOK", menu.buttonAt(21)?.icon?.materialName)
-        assertEquals("NAME_TAG", menu.buttonAt(25)?.icon?.materialName)
-        assertEquals("GOLD_INGOT", menu.buttonAt(29)?.icon?.materialName)
-        assertEquals("ENDER_PEARL", menu.buttonAt(31)?.icon?.materialName)
-        assertEquals("SUNFLOWER", menu.buttonAt(37)?.icon?.materialName)
-        assertEquals("MAP", menu.buttonAt(43)?.icon?.materialName)
-        assertEquals("EMERALD", menu.buttonAt(49)?.icon?.materialName)
+    fun starts_with_released_feature_templates_without_auto_seeded_menu() {
+        assertTrue(plugin.menuRepository.listMenuIds().isEmpty())
+        assertFalse(File(plugin.dataFolder, "menus/menu.yml").isFile)
+        assertTrue(releasedTemplateFiles().isNotEmpty())
     }
 
     @Test
-    fun parses_showcase_inline_input_and_binding_context() {
-        val showcase = plugin.menuRepository.menu("showcase")
+    fun relative_menu_path_accepts_absolute_file_with_relative_base_folder() {
+        val relativeMenuFolder = File("plugins/AMenu/menus")
+        val absoluteMenuFile = File(relativeMenuFolder.absoluteFile, "nested/live.yml")
+
+        assertEquals("nested/live.yml", normalizedRelativeMenuPath(relativeMenuFolder, absoluteMenuFile))
+    }
+
+    @Test
+    fun parses_feature_template_refresh_and_binding_context() {
+        val template = releasedTemplateFiles().first { file ->
+            val text = file.readText(Charsets.UTF_8)
+            text.contains("update:") && text.contains("bindings:")
+        }
+        val menuId = installTemplateMenu(template)
+        val showcase = plugin.menuRepository.menu(menuId)
         assertNotNull(showcase)
 
-        val historyButton = showcase!!.buttonAt(9)
-        assertNotNull(historyButton)
-        assertEquals("BOOKSHELF", historyButton!!.icon.materialName)
-        assertTrue(historyButton.actions.any { it is MenuAction.Open && it.menuId == "history" })
-
-        val boundButton = showcase.buttonAt(12)
-        assertNotNull(boundButton)
-        assertTrue(boundButton!!.conditions.any {
-            it is MenuCondition.PlaceholderEquals && it.key == "binding-type" && it.value == "item"
-        })
-        assertEquals("COMPASS", boundButton.icon.materialName)
-        assertTrue(boundButton.actions.any { it is MenuAction.Message && it.text == "bound-{binding-id}-{binding-action}" })
-
-        assertEquals(1, showcase.bindings.size)
-        val binding = showcase.bindings.single()
-        assertEquals("browser-compass", binding.id)
-        assertEquals(MenuBindingType.ITEM, binding.type)
-        assertEquals("COMPASS", binding.materialName)
-        assertTrue(binding.actions.contains(MenuBindingAction.RIGHT_CLICK_AIR))
+        assertTrue(showcase!!.buttons.values.any { it.updateIntervalTicks != null })
+        assertTrue(showcase.bindings.isNotEmpty())
     }
 
     @Test
-    fun loads_bundled_runtime_and_admin_examples() {
+    fun loads_feature_showcase_templates_after_copying_to_menus() {
+        val installed = installAllReleasedTemplates()
         val menuIds = plugin.menuRepository.listMenuIds().toSet()
-        assertTrue(menuIds.containsAll(setOf("menu", "pay", "showcase", "history", "admin", "runtime", "skin")))
 
-        val historyMenu = plugin.menuRepository.menu("history")
-        val adminMenu = plugin.menuRepository.menu("admin")
-        val runtimeMenu = plugin.menuRepository.menu("runtime")
-        val skinMenu = plugin.menuRepository.menu("skin")
+        assertTrue(installed.isNotEmpty())
+        assertTrue(menuIds.containsAll(installed))
+        installed.forEach { menuId ->
+            val menu = plugin.menuRepository.menu(menuId)
+            assertNotNull(menu)
+            assertTrue(menu!!.rows in 1..6)
+            assertTrue(menu.size == menu.rows * 9)
+        }
+    }
 
-        assertNotNull(historyMenu)
-        assertNotNull(adminMenu)
-        assertNotNull(runtimeMenu)
-        assertNotNull(skinMenu)
-        assertEquals(4L, historyMenu!!.pageRegions["showcase"]!!.asyncDelayTicks)
-        assertTrue(adminMenu!!.buttonAt(12)!!.actions.any {
-            it is MenuAction.ConsoleCommand && it.command == "amenu reload"
-        })
+    private fun installTemplateMenu(template: File): String {
+        val menu = File(plugin.dataFolder, "menus/${template.name}")
+        require(template.isFile) { "Missing bundled template ${template.absolutePath}" }
+        menu.parentFile.mkdirs()
+        template.copyTo(menu, overwrite = true)
+        val report = plugin.menuRepository.loadMenus()
+        assertTrue(report.successful)
+        return template.nameWithoutExtension.lowercase()
+    }
 
-        val runtimePromptAction = runtimeMenu!!.buttonAt(10)!!.actions.filterIsInstance<MenuAction.Prompt>().single()
-        val runtimePrompt = runtimeMenu.prompts[runtimePromptAction.promptId]
-        assertNotNull(runtimePrompt)
-        assertEquals(PromptType.CHAT, runtimePrompt!!.type)
-        assertTrue(runtimePrompt.cancelActions.any { it is MenuAction.Open && it.menuId == "runtime" })
-        assertTrue(runtimeMenu.buttons.values.any { button ->
-            button.actions.any { it is MenuAction.Open && it.menuId == "history" }
-        })
+    private fun installAllReleasedTemplates(): Set<String> {
+        val templates = releasedTemplateFiles()
+        templates.forEach { template ->
+            val menu = File(plugin.dataFolder, "menus/${template.name}")
+            menu.parentFile.mkdirs()
+            template.copyTo(menu, overwrite = true)
+        }
+        val report = plugin.menuRepository.loadMenus()
+        assertTrue(report.successful)
+        return templates.map { it.nameWithoutExtension.lowercase() }.toSet()
+    }
 
-        assertTrue(skinMenu!!.bindings.any { it.type == MenuBindingType.COMMAND && it.commandAlias == "skin" })
-        assertTrue(skinMenu.buttonAt(12)!!.actions.any { it is MenuAction.PlayerCommand && it.command == "skins" })
-        val skinPromptAction = skinMenu.buttonAt(14)!!.actions.filterIsInstance<MenuAction.Prompt>().single()
-        val skinPrompt = skinMenu.prompts[skinPromptAction.promptId]
-        assertNotNull(skinPrompt)
-        assertEquals(PromptType.CHAT, skinPrompt!!.type)
-        assertTrue(skinPrompt.submitActions.any { it is MenuAction.PlayerCommand && it.command == "skin set {input}" })
-        assertTrue(skinPrompt.cancelActions.any { it is MenuAction.Open && it.menuId == "skin" })
+    private fun releasedTemplateFiles(): List<File> {
+        val templates = File(plugin.dataFolder, "templates")
+        return templates.listFiles { file -> file.isFile && file.extension.equals("yml", ignoreCase = true) }
+            ?.sortedBy { it.name }
+            .orEmpty()
+    }
+
+    @Test
+    fun parses_copy_ready_project_root_menus_without_content_hardcoding() {
+        val installed = installProjectRootMenus()
+        val menuIds = plugin.menuRepository.listMenuIds().toSet()
+
+        assertTrue(installed.isNotEmpty())
+        assertTrue(menuIds.containsAll(installed))
+        installed.forEach { menuId ->
+            val menu = plugin.menuRepository.menu(menuId)
+            assertNotNull(menu)
+            assertTrue(menu!!.buttons.isNotEmpty())
+            assertTrue(menu.bindings.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun copy_ready_project_root_menu_visible_messages_close_first() {
+        val violations = projectRootMenuFiles()
+            .flatMap { file -> visibleMessageCloseFirstViolations(file).map { "${file.name}:$it" } }
+
+        assertTrue(violations.isEmpty(), violations.joinToString(System.lineSeparator()))
+    }
+
+    private fun installProjectRootMenus(): Set<String> {
+        val sources = projectRootMenuFiles()
+        sources.forEach { source ->
+            val menu = File(plugin.dataFolder, "menus/${source.name}")
+            menu.parentFile.mkdirs()
+            source.copyTo(menu, overwrite = true)
+        }
+        val report = plugin.menuRepository.loadMenus()
+        assertTrue(report.successful)
+        return sources.map { it.nameWithoutExtension.lowercase() }.toSet()
+    }
+
+    private fun projectRootMenuFiles(): List<File> {
+        return File(".").listFiles { file -> file.isFile && file.extension.equals("yml", ignoreCase = true) }
+            ?.sortedBy { it.name }
+            .orEmpty()
+    }
+
+    private fun visibleMessageCloseFirstViolations(file: File): List<Int> {
+        val lines = file.readLines(Charsets.UTF_8)
+        val violations = mutableListOf<Int>()
+        var index = 0
+        while (index < lines.size) {
+            val match = ACTION_ITEM_REGEX.matchEntire(lines[index])
+            if (match == null) {
+                index++
+                continue
+            }
+            val indent = match.groupValues[1]
+            val start = index
+            val group = mutableListOf<String>()
+            while (index < lines.size && lines[index].startsWith("$indent- ")) {
+                group += lines[index]
+                index++
+            }
+            val hasVisibleMessage = group.any { ACTION_VISIBLE_MESSAGE_REGEX.containsMatchIn(it) }
+            val startsWithClose = ACTION_CLOSE_REGEX.matches(group.firstOrNull().orEmpty())
+            if (hasVisibleMessage && !startsWithClose) {
+                violations += start + 1
+            }
+        }
+        return violations
     }
 
     @Test
@@ -202,7 +247,7 @@ class MenuRepositoryDslTest {
         assertEquals("EMERALD", pointsPayMenu!!.buttonAt(10)!!.icon.materialName)
         assertEquals("PAPER", pointsQuotaMenu!!.buttonAt(10)!!.icon.materialName)
         assertEquals("DIAMOND", vipPayMenu!!.buttonAt(10)!!.icon.materialName)
-        assertEquals("pay", plugin.menuRepository.menu("pay")!!.id)
+        assertEquals("points/pay", plugin.menuRepository.menu("pay")!!.id)
         assertSame(pointsQuotaMenu, plugin.menuRepository.menu("quota"))
     }
 
@@ -274,9 +319,7 @@ class MenuRepositoryDslTest {
         assertEquals("CLOCK", rewards.loadingIcon.materialName)
         assertEquals("BARRIER", rewards.emptyIcon.materialName)
 
-        val bundledMenu = plugin.menuRepository.menu("menu")
-        assertNotNull(bundledMenu)
-        assertEquals("GOLDEN_HOE", bundledMenu!!.buttonAt(0)?.icon?.materialName)
+        assertFalse(plugin.menuRepository.listMenuIds().contains("menu"))
     }
 
     @Test
@@ -347,7 +390,11 @@ class MenuRepositoryDslTest {
         val chestSlot = 10
         assertEquals("BARREL", menu.buttonAt(chestSlot)!!.icon.materialName)
         assertTrue(menu.buttonAt(chestSlot)!!.icon.glow)
-        assertTrue(menu.buttonAt(chestSlot)!!.actions.any { it is MenuAction.PlayerCommand && it.command == "pi" })
+        assertTrue(menu.buttonAt(chestSlot)!!.actions.any { action ->
+            action is MenuAction.Conditional &&
+                action.condition == MenuCondition.PlaceholderEquals("click-type", "left") &&
+                action.successActions.any { it is MenuAction.PlayerCommand && it.command == "pi" }
+        })
 
         val shopSlot = 11
         assertEquals("EMERALD", menu.buttonAt(shopSlot)!!.icon.materialName)
@@ -373,8 +420,8 @@ class MenuRepositoryDslTest {
             buttons:
               "A":
                 material: FEATHER
-                name: "Flight"
-                conditions: "perm: cmi.command.fly"
+                name: "Permission Button"
+                conditions: "perm: example.permission"
                 click:
                   - "message: owned"
               "B":
@@ -397,10 +444,10 @@ class MenuRepositoryDslTest {
 
         assertNotNull(menu)
 
-        val flightButton = menu!!.buttonAt(10)
-        assertNotNull(flightButton)
-        assertTrue(flightButton!!.conditions.any {
-            it is MenuCondition.HasPermission && it.permission == "cmi.command.fly"
+        val permissionButton = menu!!.buttonAt(10)
+        assertNotNull(permissionButton)
+        assertTrue(permissionButton!!.conditions.any {
+            it is MenuCondition.HasPermission && it.permission == "example.permission"
         })
 
         val boundButton = menu.buttonAt(12)
@@ -431,25 +478,25 @@ class MenuRepositoryDslTest {
             buttons:
               "A":
                 material: CHEST
-                name: "Starter"
+                name: "Primary"
                 actions:
                   all:
                     actions:
                       - "close"
                       - "delay: 1"
-                      - "command: kit starter"
+                      - "command: example-action primary"
                 icons:
-                  - condition: "perm *starter.claimed"
+                  - condition: "perm *example.state.hidden"
                     display:
                       mats: AIR
-                  - condition: "perm *starter.unlocked"
+                  - condition: "perm *example.state.unlocked"
                     display:
                       mats: ENDER_CHEST
-                      name: "Holiday"
+                      name: "Unlocked"
                     actions:
                       all:
                         actions:
-                          - "console: money give %player_name% 1888"
+                          - "console: example-console reward %player_name%"
             """.trimIndent(),
             Charsets.UTF_8,
         )
@@ -463,23 +510,66 @@ class MenuRepositoryDslTest {
         assertEquals("CHEST", button!!.icon.materialName)
         assertTrue(button.actions.any { it is MenuAction.Close })
         assertTrue(button.actions.any { it is MenuAction.Delay && it.ticks == 1L })
-        assertTrue(button.actions.any { it is MenuAction.PlayerCommand && it.command == "kit starter" })
+        assertTrue(button.actions.any { it is MenuAction.PlayerCommand && it.command == "example-action primary" })
         assertEquals(2, button.states.size)
 
         val firstState = button.states[0]
         assertTrue(firstState.conditions.any {
-            it is MenuCondition.HasPermission && it.permission == "starter.claimed"
+            it is MenuCondition.HasPermission && it.permission == "example.state.hidden"
         })
         assertEquals("AIR", firstState.icon!!.materialName)
 
         val secondState = button.states[1]
         assertTrue(secondState.conditions.any {
-            it is MenuCondition.HasPermission && it.permission == "starter.unlocked"
+            it is MenuCondition.HasPermission && it.permission == "example.state.unlocked"
         })
         assertEquals("ENDER_CHEST", secondState.icon!!.materialName)
         assertTrue(secondState.actions!!.any {
-            it is MenuAction.ConsoleCommand && it.command == "money give %player_name% 1888"
+            it is MenuAction.ConsoleCommand && it.command == "example-console reward %player_name%"
         })
+    }
+
+    @Test
+    fun state_icon_name_override_without_lore_clears_base_lore() {
+        val file = File(plugin.dataFolder, "menus/state-icon-override.yml")
+        file.parentFile.mkdirs()
+        file.writeText(
+            """
+            title: "State Icon Override"
+            layout:
+              - "#########"
+              - "#A#######"
+              - "#########"
+            fill:
+              material: GRAY_STAINED_GLASS_PANE
+              name: " "
+            buttons:
+              "A":
+                material: CHEST
+                name: "Base"
+                lore:
+                  - "base-lore"
+                icons:
+                  - condition: "perm *example.state.active"
+                    display:
+                      mats: ENDER_CHEST
+                      name: "Override"
+            """.trimIndent(),
+            Charsets.UTF_8,
+        )
+
+        plugin.menuRepository.loadMenus()
+        val menu = plugin.menuRepository.menu("state-icon-override")
+
+        assertNotNull(menu)
+        val button = menu!!.buttonAt(10)
+        assertNotNull(button)
+        assertEquals(listOf("base-lore"), button!!.icon.lore)
+
+        val state = button.states.single()
+        assertEquals("ENDER_CHEST", state.icon!!.materialName)
+        assertEquals("Override", state.icon!!.name)
+        assertTrue(state.icon!!.lore.isEmpty())
     }
 
     @Test
@@ -491,15 +581,15 @@ class MenuRepositoryDslTest {
             title: "Unplaced Button Demo"
             shape:
               - "#########"
-              - "#`Flight`#######"
+              - "#`Primary`#######"
               - "#########"
             fill:
               material: GRAY_STAINED_GLASS_PANE
               name: " "
             buttons:
-              "Flight":
+              "Primary":
                 material: FEATHER
-                name: "Flight"
+                name: "Primary"
               "Guide":
                 material: PAPER
                 name: "Guide"
@@ -550,7 +640,7 @@ class MenuRepositoryDslTest {
     }
 
     @Test
-    fun parses_conditional_purchase_actions_and_short_aliases() {
+    fun parses_conditional_action_branches_and_short_aliases() {
         val file = File(plugin.dataFolder, "menus/conditional-action-demo.yml")
         file.parentFile.mkdirs()
         file.writeText(
@@ -566,17 +656,17 @@ class MenuRepositoryDslTest {
             buttons:
               "A":
                 material: FEATHER
-                name: "Flight"
+                name: "Conditional"
                 click:
                   - condition: "check papi *%playerpoints_points% >= *30"
                     actions:
                       - "take-point: 30"
-                      - "console: lp user %player_name% permission set cmi.command.fly true"
-                      - "title: &a&lFlight Activated||&7Purchase success"
-                      - "tell: &aPurchase success"
+                      - "console: example-console grant %player_name% example.permission"
+                      - "title: &a&lAction Activated||&7Action success"
+                      - "tell: &aAction success"
                     deny:
-                      - "title: &c&lPurchase failed||&7Not enough points"
-                      - "tell: &cNot enough points"
+                      - "title: &c&lAction failed||&7Condition not met"
+                      - "tell: &cCondition not met"
             """.trimIndent(),
             Charsets.UTF_8,
         )
@@ -592,15 +682,21 @@ class MenuRepositoryDslTest {
         assertEquals("30", condition.right)
         assertTrue(action.successActions.any { it is MenuAction.TakePoint && it.amount == "30" })
         assertTrue(action.successActions.any {
-            it is MenuAction.ConsoleCommand && it.command == "lp user %player_name% permission set cmi.command.fly true"
+            it is MenuAction.ConsoleCommand && it.command == "example-console grant %player_name% example.permission"
         })
         assertTrue(action.successActions.any {
-            it is MenuAction.Title && it.title == "&a&lFlight Activated" && it.subtitle == "&7Purchase success"
+            it is MenuAction.Title && it.title == "&a&lAction Activated" && it.subtitle == "&7Action success"
         })
-        assertTrue(action.successActions.any { it is MenuAction.Message && it.text == "&aPurchase success" })
+        assertTrue(action.successActions.any { it is MenuAction.Message && it.text == "&aAction success" })
         assertTrue(action.denyActions.any {
-            it is MenuAction.Title && it.title == "&c&lPurchase failed" && it.subtitle == "&7Not enough points"
+            it is MenuAction.Title && it.title == "&c&lAction failed" && it.subtitle == "&7Condition not met"
         })
-        assertTrue(action.denyActions.any { it is MenuAction.Message && it.text == "&cNot enough points" })
+        assertTrue(action.denyActions.any { it is MenuAction.Message && it.text == "&cCondition not met" })
+    }
+
+    private companion object {
+        private val ACTION_ITEM_REGEX = Regex("^(\\s*)-\\s+.+")
+        private val ACTION_VISIBLE_MESSAGE_REGEX = Regex("^\\s*-\\s+\"?(tell|title):")
+        private val ACTION_CLOSE_REGEX = Regex("^\\s*-\\s+\"?close\"?\\s*$")
     }
 }

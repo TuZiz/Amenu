@@ -97,17 +97,6 @@
             <resource>
                 <directory>${project.basedir}/src/main/resources</directory>
                 <filtering>true</filtering>
-                <excludes>
-                    <exclude>menus/服务器正式菜单/**</exclude>
-                    <exclude>menus/点券商店.yml</exclude>
-                    <exclude>menus/点券商店-2.yml</exclude>
-                    <exclude>menus/权限.yml</exclude>
-                    <exclude>menus/称号-首页.yml</exclude>
-                    <exclude>menus/称号-怪物页.yml</exclude>
-                    <exclude>menus/称号-成就页.yml</exclude>
-                    <exclude>menus/聊天颜色商店.yml</exclude>
-                    <exclude>menus/聊天颜色切换.yml</exclude>
-                </excludes>
             </resource>
         </resources>
         <plugins>

@@ -1,0 +1,237 @@
+title: "<gradient:#F6D365:#FDA085><bold>功能展示 - 动作执行</bold></gradient>"
+
+Shape:
+  - "#########"
+  - "##`飞行权限`#`随身工作台`#`末影箱权限`##"
+  - "##`随身铁砧`#`随身切石机`#`随身砂轮`##"
+  - "#########"
+  - "#########"
+  - "####`返回点券商店`####"
+
+BUTTONS:
+  "#":
+    material: BLACK_STAINED_GLASS_PANE
+    name: " "
+
+  "飞行权限":
+    material: FEATHER
+    shiny: true
+    name: "<gradient:#00C9FF:#92FE9D><bold>飞行权限</bold></gradient>"
+    lore:
+      - " <#4A4A4A>▪ ┈┈┈┈┈┈┈┈┈┈┈┈ ▪</#4A4A4A>"
+      - ""
+      - "  <#E0E0E0>解放重力束缚，在生存世界中自由探索。</#E0E0E0>"
+      - ""
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>动作:</#CCCCCC> <#8FD3F4>条件购买 + 扣点 + 授权 + 反馈</#8FD3F4>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>价格:</#CCCCCC> <color:#FFD700>380 星辰</color>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>余额:</#CCCCCC> <color:#00FF7F>%playerpoints_points%</color>"
+      - ""
+      - " <#84FAB0>➭</#84FAB0> <#8FD3F4>左键点击 支付并激活</#8FD3F4>"
+    click:
+      - condition: "check papi *%playerpoints_points% >= *380"
+        actions:
+          - "take-point: 380"
+          - "console: lp user %player_name% permission set cmi.command.fly true"
+          - "sound: ENTITY_ENDER_DRAGON_FLAP:1:1"
+          - "title: &a&l权限激活||&7购买成功,尽情翱翔吧"
+          - "tell: &8[&b权限&8] &a飞行权限购买成功！可输入 &f/fly &a使用。"
+          - "close"
+        deny:
+          - "sound: BLOCK_ANVIL_DESTROY:1:2"
+          - "title: &c&l购买失败||&7您的星辰余额不足"
+          - "tell: &8[&c提示&8] &c需要 &d380 星辰&c，您当前仅有 &f%playerpoints_points% 星辰&c。"
+    icons:
+      - condition: "perm *cmi.command.fly"
+        material: FEATHER
+        shiny: true
+        name: "<gradient:#43E97B:#38F9D7><bold>飞行功能 | 已激活</bold></gradient>"
+        lore:
+          - " <#4A4A4A>▪ ┈┈┈┈┈┈┈┈┈┈┈┈ ▪</#4A4A4A>"
+          - ""
+          - "  <#E0E0E0>您已拥有该特权，可直接执行后续动作。</#E0E0E0>"
+          - "  <#F6D365>❖</#F6D365> <#CCCCCC>关联指令:</#CCCCCC> <#8FD3F4>/fly</#8FD3F4>"
+          - "  <#43E97B>✔</#43E97B> <#38F9D7>状态: 已永久解锁</#38F9D7>"
+          - ""
+          - " <#43E97B>➭</#43E97B> <#38F9D7>左键点击 切换飞行状态</#38F9D7>"
+        click:
+          - "close"
+          - "delay: 1"
+          - "player: fly"
+
+  "随身工作台":
+    material: CRAFTING_TABLE
+    name: "<gradient:#A1C4FD:#C2E9FB><bold>便捷工作台</bold></gradient>"
+    lore:
+      - " <#4A4A4A>▪ ┈┈┈┈┈┈┈┈┈┈┈┈ ▪</#4A4A4A>"
+      - ""
+      - "  <#E0E0E0>随时随地打开工作台界面。</#E0E0E0>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>解锁:</#CCCCCC> <#C2E9FB>/wb</#C2E9FB>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>价格:</#CCCCCC> <color:#FFD700>100 星辰</color>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>余额:</#CCCCCC> <color:#00FF7F>%playerpoints_points%</color>"
+      - ""
+      - " <#A1C4FD>➭</#A1C4FD> <#C2E9FB>左键点击 支付并激活</#C2E9FB>"
+    click:
+      - condition: "check papi *%playerpoints_points% >= *100"
+        actions:
+          - "take-point: 100"
+          - "console: lp user %player_name% permission set cmi.command.workbench true"
+          - "sound: ENTITY_PLAYER_LEVELUP:1:1.2"
+          - "title: &a&l权限激活||&7随身工作台已解锁"
+          - "tell: &8[&e功能&8] &a随身工作台购买成功！输入 &f/wb &a即可使用。"
+          - "close"
+        deny:
+          - "sound: BLOCK_ANVIL_DESTROY:1:2"
+          - "title: &c&l购买失败||&7您的星辰余额不足"
+          - "tell: &8[&c提示&8] &c需要 &d100 星辰&c，您当前仅有 &f%playerpoints_points% 星辰&c。"
+    icons:
+      - condition: "perm *cmi.command.workbench"
+        material: CRAFTING_TABLE
+        shiny: true
+        name: "<gradient:#43E97B:#38F9D7><bold>便捷工作台 | 已激活</bold></gradient>"
+        lore:
+          - "  <#E0E0E0>已解锁该功能，外出探险时可直接打开。</#E0E0E0>"
+          - "  <#F6D365>❖</#F6D365> <#CCCCCC>关联指令:</#CCCCCC> <#8FD3F4>/wb</#8FD3F4>"
+        click:
+          - "close"
+          - "delay: 1"
+          - "player: wb"
+
+  "末影箱权限":
+    material: ENDER_CHEST
+    name: "<gradient:#B19FFF:#F778BA><bold>随身末影箱</bold></gradient>"
+    lore:
+      - " <#4A4A4A>▪ ┈┈┈┈┈┈┈┈┈┈┈┈ ▪</#4A4A4A>"
+      - ""
+      - "  <#E0E0E0>随时呼出末影箱，整理背包更轻松。</#E0E0E0>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>解锁:</#CCCCCC> <#F778BA>/ec</#F778BA>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>价格:</#CCCCCC> <color:#FFD700>100 星辰</color>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>余额:</#CCCCCC> <color:#00FF7F>%playerpoints_points%</color>"
+      - ""
+      - " <#B19FFF>➭</#B19FFF> <#F778BA>左键点击 支付并激活</#F778BA>"
+    click:
+      - condition: "check papi *%playerpoints_points% >= *100"
+        actions:
+          - "take-point: 100"
+          - "console: lp user %player_name% permission set cmi.command.enderchest true"
+          - "sound: BLOCK_ENDER_CHEST_OPEN:1:1"
+          - "title: &a&l权限激活||&7随身末影箱已解锁"
+          - "tell: &8[&d功能&8] &a末影箱权限购买成功！输入 &f/ec &a即可使用。"
+          - "close"
+        deny:
+          - "sound: BLOCK_ANVIL_DESTROY:1:2"
+          - "title: &c&l购买失败||&7您的星辰余额不足"
+          - "tell: &8[&c提示&8] &c需要 &d100 星辰&c，您当前仅有 &f%playerpoints_points% 星辰&c。"
+    icons:
+      - condition: "perm *cmi.command.enderchest"
+        material: ENDER_CHEST
+        shiny: true
+        name: "<gradient:#43E97B:#38F9D7><bold>随身末影箱 | 已激活</bold></gradient>"
+        lore:
+          - "  <#E0E0E0>您的专属跨空间储物箱已就绪。</#E0E0E0>"
+          - "  <#F6D365>❖</#F6D365> <#CCCCCC>关联指令:</#CCCCCC> <#8FD3F4>/ec</#8FD3F4>"
+        click:
+          - "close"
+          - "delay: 1"
+          - "player: ec"
+
+  "随身铁砧":
+    material: ANVIL
+    name: "<gradient:#FF9A9E:#FECFEF><bold>便捷铁砧</bold></gradient>"
+    lore:
+      - "  <#E0E0E0>修补装备、敲击命名不再需要回家。</#E0E0E0>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>价格:</#CCCCCC> <color:#FFD700>150 星辰</color>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>余额:</#CCCCCC> <color:#00FF7F>%playerpoints_points%</color>"
+    click:
+      - condition: "check papi *%playerpoints_points% >= *150"
+        actions:
+          - "take-point: 150"
+          - "console: lp user %player_name% permission set cmi.command.anvil true"
+          - "sound: BLOCK_ANVIL_USE:1:1"
+          - "title: &a&l权限激活||&7随身铁砧已解锁"
+          - "tell: &8[&e功能&8] &a随身铁砧购买成功！输入 &f/anvil &a即可使用。"
+          - "close"
+        deny:
+          - "sound: BLOCK_ANVIL_DESTROY:1:2"
+          - "title: &c&l购买失败||&7您的星辰余额不足"
+          - "tell: &8[&c提示&8] &c需要 &d150 星辰&c，您当前仅有 &f%playerpoints_points% 星辰&c。"
+    icons:
+      - condition: "perm *cmi.command.anvil"
+        material: ANVIL
+        shiny: true
+        name: "<gradient:#43E97B:#38F9D7><bold>便捷铁砧 | 已激活</bold></gradient>"
+        click:
+          - "close"
+          - "delay: 1"
+          - "player: anvil"
+
+  "随身切石机":
+    material: STONECUTTER
+    name: "<gradient:#D4FC79:#96E6A1><bold>便捷切石机</bold></gradient>"
+    lore:
+      - "  <#E0E0E0>建筑党的福音，随时转换各类石材方块。</#E0E0E0>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>价格:</#CCCCCC> <color:#FFD700>100 星辰</color>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>余额:</#CCCCCC> <color:#00FF7F>%playerpoints_points%</color>"
+    click:
+      - condition: "check papi *%playerpoints_points% >= *100"
+        actions:
+          - "take-point: 100"
+          - "console: lp user %player_name% permission set cmi.command.stonecutter true"
+          - "sound: UI_STONECUTTER_TAKE_RESULT:1:1"
+          - "title: &a&l权限激活||&7随身切石机已解锁"
+          - "tell: &8[&e功能&8] &a随身切石机购买成功！输入 &f/stonecutter &a即可使用。"
+          - "close"
+        deny:
+          - "sound: BLOCK_ANVIL_DESTROY:1:2"
+          - "title: &c&l购买失败||&7您的星辰余额不足"
+          - "tell: &8[&c提示&8] &c需要 &d100 星辰&c，您当前仅有 &f%playerpoints_points% 星辰&c。"
+    icons:
+      - condition: "perm *cmi.command.stonecutter"
+        material: STONECUTTER
+        shiny: true
+        name: "<gradient:#43E97B:#38F9D7><bold>便捷切石机 | 已激活</bold></gradient>"
+        click:
+          - "close"
+          - "delay: 1"
+          - "player: stonecutter"
+
+  "随身砂轮":
+    material: GRINDSTONE
+    name: "<gradient:#E0C3FC:#8EC5FC><bold>便捷砂轮</bold></gradient>"
+    lore:
+      - "  <#E0E0E0>轻松祛除废弃附魔，快速回收经验。</#E0E0E0>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>价格:</#CCCCCC> <color:#FFD700>100 星辰</color>"
+      - "  <#F6D365>❖</#F6D365> <#CCCCCC>余额:</#CCCCCC> <color:#00FF7F>%playerpoints_points%</color>"
+    click:
+      - condition: "check papi *%playerpoints_points% >= *100"
+        actions:
+          - "take-point: 100"
+          - "console: lp user %player_name% permission set cmi.command.grindstone true"
+          - "sound: BLOCK_GRINDSTONE_USE:1:1"
+          - "title: &a&l权限激活||&7随身砂轮已解锁"
+          - "tell: &8[&e功能&8] &a随身砂轮购买成功！输入 &f/grindstone &a即可使用。"
+          - "close"
+        deny:
+          - "sound: BLOCK_ANVIL_DESTROY:1:2"
+          - "title: &c&l购买失败||&7您的星辰余额不足"
+          - "tell: &8[&c提示&8] &c需要 &d100 星辰&c，您当前仅有 &f%playerpoints_points% 星辰&c。"
+    icons:
+      - condition: "perm *cmi.command.grindstone"
+        material: GRINDSTONE
+        shiny: true
+        name: "<gradient:#43E97B:#38F9D7><bold>便捷砂轮 | 已激活</bold></gradient>"
+        click:
+          - "close"
+          - "delay: 1"
+          - "player: grindstone"
+
+  "返回点券商店":
+    material: BARRIER
+    name: "<gradient:#FF9A9E:#FECFEF><bold>返回上一页 | Back</bold></gradient>"
+    lore:
+      - " <#4A4A4A>▪ ┈┈┈┈┈┈┈┈┈┈┈┈ ▪</#4A4A4A>"
+      - ""
+      - "  <#E0E0E0>点击返回到上一页。</#E0E0E0>"
+      - ""
+      - " <#FF9A9E>➭</#FF9A9E> <#FECFEF>左键点击 确认返回</#FECFEF>"
+    click:
+      - "back"

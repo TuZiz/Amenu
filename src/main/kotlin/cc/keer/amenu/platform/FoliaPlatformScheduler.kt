@@ -1,6 +1,5 @@
 package cc.keer.amenu.platform
 
-import io.papermc.paper.threadedregions.scheduler.ScheduledTask
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import org.bukkit.plugin.java.JavaPlugin
@@ -234,15 +233,11 @@ private class ReflectiveFoliaBridge(private val plugin: JavaPlugin) {
 }
 
 private class ReflectiveTaskHandle(private val scheduledTask: Any?) : TaskHandle {
-    private val typedScheduledTask = scheduledTask as? ScheduledTask
     private val cancelMethod = scheduledTask?.javaClass?.methods?.firstOrNull { method ->
         method.name == "cancel" && method.parameterCount == 0
     }
 
     override fun cancel() {
-        typedScheduledTask?.cancel()?.let {
-            return
-        }
         cancelMethod?.invoke(scheduledTask)
     }
 }

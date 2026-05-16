@@ -1,6 +1,7 @@
 package cc.keer.amenu.service.provider
 
 import com.github.benmanes.caffeine.cache.Caffeine
+import java.util.concurrent.atomic.AtomicLong
 
 class ProviderCache(
     private val tickProvider: () -> Long = { System.nanoTime() / 50_000_000L },
@@ -21,14 +22,15 @@ class ProviderCache(
     )
 
     private data class Entry(
-        var current: ProviderResult? = null,
-        var lastGood: ProviderResult.Success? = null,
-        var expiresAtTick: Long? = null,
-        var loading: Boolean = false,
-        var requestToken: Long = 0L,
+        val current: ProviderResult? = null,
+        val lastGood: ProviderResult.Success? = null,
+        val expiresAtTick: Long? = null,
+        val loading: Boolean = false,
+        val requestToken: Long = 0L,
     )
 
     private val cache = Caffeine.newBuilder().build<Key, Entry>()
+    private val tokens = AtomicLong()
 
     fun read(key: Key): Snapshot {
         val entry = cache.getIfPresent(key)
@@ -42,10 +44,14 @@ class ProviderCache(
     }
 
     fun beginLoad(key: Key): Long {
-        val entry = cache.get(key) { Entry() }!!
-        entry.loading = true
-        entry.requestToken += 1
-        return entry.requestToken
+        val token = tokens.incrementAndGet()
+        cache.asMap().compute(key) { _, existing ->
+            (existing ?: Entry()).copy(
+                loading = true,
+                requestToken = token,
+            )
+        }
+        return token
     }
 
     fun complete(
@@ -54,28 +60,31 @@ class ProviderCache(
         result: ProviderResult,
         ttlTicks: Long?,
     ) {
-        val entry = cache.get(key) { Entry() } ?: return
-        if (entry.requestToken != requestToken) {
-            return
+        cache.asMap().compute(key) { _, existing ->
+            val entry = existing ?: return@compute null
+            if (entry.requestToken != requestToken) {
+                return@compute entry
+            }
+            entry.copy(
+                loading = false,
+                current = result,
+                lastGood = if (result is ProviderResult.Success) result else entry.lastGood,
+                expiresAtTick = ttlTicks?.let { tickProvider() + it },
+            )
         }
-        entry.loading = false
-        entry.current = result
-        if (result is ProviderResult.Success) {
-            entry.lastGood = result
-        }
-        entry.expiresAtTick = ttlTicks?.let { tickProvider() + it }
     }
 
     fun invalidate(
         key: Key,
         dropLastGood: Boolean = false,
     ) {
-        val entry = cache.getIfPresent(key) ?: return
-        entry.current = null
-        entry.expiresAtTick = null
-        entry.loading = false
-        if (dropLastGood) {
-            entry.lastGood = null
+        cache.asMap().computeIfPresent(key) { _, entry ->
+            entry.copy(
+                current = null,
+                expiresAtTick = null,
+                loading = false,
+                lastGood = if (dropLastGood) null else entry.lastGood,
+            )
         }
     }
 

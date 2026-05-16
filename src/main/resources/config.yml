@@ -1,5 +1,13 @@
 command-open-permission: amenu.open
 
+give:
+  full-inventory-action: DROP
+
+security:
+  allow-console-actions: true
+  warn-unsafe-console-placeholders: true
+  max-take-point: 100000
+
 chat-input:
   timeout-seconds: 15
   global-cancel-keywords:

@@ -1,6 +1,7 @@
 package cc.keer.amenu.command
 
 import cc.keer.amenu.AMenuPlugin
+import cc.keer.amenu.FullInventoryAction
 import cc.keer.amenu.config.IconDefinition
 import cc.keer.amenu.config.MenuBindingDefinition
 import cc.keer.amenu.config.MenuBindingType
@@ -30,20 +31,34 @@ class AMenuCommand(
                 return true
             }
 
-            val report = plugin.reloadPlugin()
-            plugin.handleReloadReport(report, initiator = "command")
-            if (report.menuReport.successful) {
-                plugin.menuService.sendSystemMessage(sender, "reloaded")
-            } else {
-                val errorSummary = report.menuReport.errors.joinToString(" | ") { "${it.fileName}: ${it.message}" }
+            sender.sendMessage("[AMenu] 正在异步重载配置...")
+            plugin.reloadPluginAsync().whenComplete { report, throwable ->
+                val deliver = Runnable {
+                    if (throwable != null) {
+                        sender.sendMessage("[AMenu] reload failed: ${throwable.message}")
+                        return@Runnable
+                    }
+                    plugin.handleReloadReport(report, initiator = "command")
+                    if (report.menuReport.successful) {
+                        plugin.menuService.sendSystemMessage(sender, "reloaded")
+                    } else {
+                        val errorSummary = report.menuReport.errors.joinToString(" | ") { "${it.fileName}: ${it.message}" }
+                        val playerSender = sender as? Player
+                        if (playerSender != null) {
+                            plugin.menuService.sendRawMessage(
+                                playerSender,
+                                "<red>菜单重载失败，已保留旧菜单。</red> <gray>$errorSummary</gray>",
+                            )
+                        } else {
+                            sender.sendMessage("[AMenu] 菜单重载失败，已保留旧菜单。$errorSummary")
+                        }
+                    }
+                }
                 val playerSender = sender as? Player
                 if (playerSender != null) {
-                    plugin.menuService.sendRawMessage(
-                        playerSender,
-                        "<red>菜单重载失败，已保留旧菜单。</red> <gray>$errorSummary</gray>",
-                    )
+                    plugin.platformScheduler.executeFor(playerSender, deliver)
                 } else {
-                    sender.sendMessage("[AMenu] 菜单重载失败，已保留旧菜单。$errorSummary")
+                    plugin.platformScheduler.executeGlobal(deliver)
                 }
             }
             return true
@@ -128,9 +143,29 @@ class AMenuCommand(
             return true
         }
 
-        player.inventory.setItemInMainHand(boundItem(player, binding))
-        plugin.menuService.sendRawMessage(player, "<green>Received binding item: <yellow>${binding.id}</yellow></green>")
+        giveBindingItem(player, boundItem(player, binding), binding.id)
         return true
+    }
+
+    private fun giveBindingItem(player: Player, item: ItemStack, bindingId: String) {
+        val leftovers = player.inventory.addItem(item)
+        if (leftovers.isEmpty()) {
+            plugin.menuService.sendRawMessage(player, "<green>Received binding item: <yellow>$bindingId</yellow></green>")
+            return
+        }
+
+        when (plugin.settings.fullInventoryAction) {
+            FullInventoryAction.DROP -> {
+                leftovers.values.forEach { leftover ->
+                    player.world.dropItemNaturally(player.location, leftover)
+                }
+                plugin.menuService.sendRawMessage(player, "<yellow>背包已满，绑定物品已掉落在脚下。</yellow>")
+            }
+
+            FullInventoryAction.DENY -> {
+                plugin.menuService.sendRawMessage(player, "<red>背包已满，未发放绑定物品。</red>")
+            }
+        }
     }
 
     private fun boundItem(player: Player, binding: MenuBindingDefinition): ItemStack {

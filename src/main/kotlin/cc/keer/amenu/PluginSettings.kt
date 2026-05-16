@@ -6,6 +6,10 @@ data class PluginSettings(
     val commandOpenPermission: String?,
     val chatTimeoutSeconds: Long,
     val globalCancelKeywords: Set<String>,
+    val fullInventoryAction: FullInventoryAction,
+    val allowConsoleActions: Boolean,
+    val warnUnsafeConsolePlaceholders: Boolean,
+    val maxTakePoint: Double,
     val messages: Map<String, String>,
 ) {
 
@@ -31,6 +35,10 @@ data class PluginSettings(
                     .map { it.trim().lowercase() }
                     .filter { it.isNotEmpty() }
                     .toSet(),
+                fullInventoryAction = FullInventoryAction.from(config.getString("give.full-inventory-action")),
+                allowConsoleActions = config.getBoolean("security.allow-console-actions", true),
+                warnUnsafeConsolePlaceholders = config.getBoolean("security.warn-unsafe-console-placeholders", true),
+                maxTakePoint = config.getDouble("security.max-take-point", 100000.0).coerceAtLeast(0.0),
                 messages = messages,
             )
         }
@@ -39,6 +47,18 @@ data class PluginSettings(
             return placeholders.entries.fold(text) { current, (key, value) ->
                 current.replace("{$key}", value)
             }
+        }
+    }
+}
+
+enum class FullInventoryAction {
+    DROP,
+    DENY,
+    ;
+
+    companion object {
+        fun from(raw: String?): FullInventoryAction {
+            return entries.firstOrNull { it.name.equals(raw?.trim(), ignoreCase = true) } ?: DROP
         }
     }
 }

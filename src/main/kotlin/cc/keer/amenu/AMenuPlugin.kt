@@ -2,6 +2,8 @@ package cc.keer.amenu
 
 import cc.keer.amenu.command.AMenuCommand
 import cc.keer.amenu.config.MenuRepository
+import cc.keer.amenu.config.PreparedMenuFileChanges
+import cc.keer.amenu.config.PreparedMenuSnapshot
 import cc.keer.amenu.gui.MenuBindingListener
 import cc.keer.amenu.gui.MenuListener
 import cc.keer.amenu.platform.PlatformScheduler
@@ -15,7 +17,9 @@ import cc.keer.amenu.service.provider.ProviderCache
 import org.bukkit.plugin.java.JavaPlugin
 import java.io.File
 import java.net.JarURLConnection
+import java.util.concurrent.CompletableFuture
 import java.util.jar.JarFile
+import org.bukkit.configuration.file.YamlConfiguration
 
 open class AMenuPlugin : JavaPlugin() {
 
@@ -107,6 +111,35 @@ open class AMenuPlugin : JavaPlugin() {
         )
     }
 
+    fun reloadPluginAsync(): CompletableFuture<ReloadReport> {
+        val future = CompletableFuture<ReloadReport>()
+        CompletableFuture
+            .supplyAsync {
+                PreparedReload(loadSettingsFromDisk(), menuRepository.prepareFullReload())
+            }
+            .whenComplete { prepared, throwable ->
+                if (throwable != null) {
+                    future.completeExceptionally(throwable)
+                    return@whenComplete
+                }
+                platformScheduler.executeGlobal(Runnable {
+                    runCatching {
+                        val ready = prepared!!
+                        val menuReport = menuRepository.commitPrepared(ready.menus)
+                        settings = ready.settings
+                        if (::menuService.isInitialized) {
+                            menuService.reload(settings)
+                        }
+                        if (::chatInputService.isInitialized) {
+                            chatInputService.reload(settings)
+                        }
+                        ReloadReport(menuReport = menuReport, configReloaded = true)
+                    }.onSuccess(future::complete).onFailure(future::completeExceptionally)
+                })
+            }
+        return future
+    }
+
     fun reloadChangedFiles(changes: MenuFileChanges): ReloadReport {
         if (changes.isEmpty) {
             return ReloadReport(
@@ -158,6 +191,61 @@ open class AMenuPlugin : JavaPlugin() {
         )
     }
 
+    fun prepareChangedFilesReload(changes: MenuFileChanges): PreparedChangedReload {
+        if (changes.isEmpty) {
+            return PreparedChangedReload(
+                settings = null,
+                changes = changes,
+                menus = null,
+            )
+        }
+        return PreparedChangedReload(
+            settings = if (changes.configChanged) loadSettingsFromDisk() else null,
+            changes = changes,
+            menus = if (changes.upsertedMenus.isNotEmpty() || changes.deletedMenus.isNotEmpty()) {
+                menuRepository.prepareFileChanges(changes.upsertedMenus, changes.deletedMenus)
+            } else {
+                null
+            },
+        )
+    }
+
+    fun commitChangedFilesReload(prepared: PreparedChangedReload): ReloadReport {
+        prepared.settings?.let { newSettings ->
+            settings = newSettings
+            if (::menuService.isInitialized) {
+                menuService.reloadSettings(settings)
+            }
+            if (::chatInputService.isInitialized) {
+                chatInputService.reload(settings)
+            }
+        }
+
+        val menuReport = if (prepared.menus != null) {
+            menuRepository.commitPreparedFileChanges(prepared.menus).also { report ->
+                if (report.applied && ::menuService.isInitialized) {
+                    menuService.handleMenuDefinitionsChanged(
+                        changedMenuIds = report.changedMenuIds,
+                        reopenMenuIds = report.reopenMenuIds,
+                        removedMenuIds = report.removedMenuIds,
+                    )
+                }
+            }
+        } else {
+            cc.keer.amenu.config.MenuLoadReport(
+                scannedFiles = 0,
+                loadedMenus = 0,
+                applied = true,
+                errors = emptyList(),
+            )
+        }
+
+        return ReloadReport(
+            menuReport = menuReport,
+            configReloaded = prepared.settings != null,
+        )
+    }
+
     fun handleReloadReport(
         report: ReloadReport,
         initiator: String,
@@ -192,8 +280,15 @@ open class AMenuPlugin : JavaPlugin() {
             }
             server.onlinePlayers
                 .filter { it.hasPermission("amenu.admin") }
-                .forEach { player -> menuService.sendRawMessage(player, adminMessage) }
+                .forEach { player ->
+                    platformScheduler.executeFor(player, Runnable { menuService.sendRawMessage(player, adminMessage) })
+                }
         }
+    }
+
+    private fun loadSettingsFromDisk(): PluginSettings {
+        val yaml = YamlConfiguration.loadConfiguration(File(dataFolder, "config.yml"))
+        return PluginSettings.from(yaml)
     }
 
     private fun bootstrapFiles() {
@@ -303,4 +398,15 @@ open class AMenuPlugin : JavaPlugin() {
 data class ReloadReport(
     val menuReport: cc.keer.amenu.config.MenuLoadReport,
     val configReloaded: Boolean,
+)
+
+private data class PreparedReload(
+    val settings: PluginSettings,
+    val menus: PreparedMenuSnapshot,
+)
+
+data class PreparedChangedReload(
+    val settings: PluginSettings?,
+    val changes: MenuFileChanges,
+    val menus: PreparedMenuFileChanges?,
 )

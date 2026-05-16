@@ -4,6 +4,7 @@ import cc.keer.amenu.AMenuPlugin
 import org.bukkit.configuration.ConfigurationSection
 import org.bukkit.configuration.file.YamlConfiguration
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 import java.util.Locale
 import java.util.logging.Level
 import kotlin.math.max
@@ -12,12 +13,45 @@ class MenuRepository(
     private val plugin: AMenuPlugin,
 ) {
 
-    private val menus = linkedMapOf<String, MenuDefinition>()
-    private val menuLookup = linkedMapOf<String, MenuDefinition>()
+    private val snapshotRef = AtomicReference(MenuSnapshot.EMPTY)
 
     fun menuFolder(): File = menuFolderFor(plugin.dataFolder)
 
     fun loadMenus(): MenuLoadReport {
+        val prepared = prepareFullReload()
+
+        val applied = when {
+            prepared.report.errors.isEmpty() -> {
+                snapshotRef.set(prepared.snapshot)
+                true
+            }
+
+            snapshotRef.get().menus.isEmpty() -> {
+                snapshotRef.set(prepared.snapshot)
+                true
+            }
+
+            else -> false
+        }
+
+        return prepared.report.copy(
+            applied = applied,
+        )
+    }
+
+    fun menu(menuId: String): MenuDefinition? = snapshotRef.get().lookup[normalizeMenuId(menuId)]
+
+    fun listMenuIds(): List<String> = snapshotRef.get().menus.keys.toList()
+
+    fun listResolvableMenuIds(): List<String> {
+        return snapshotRef.get().lookup.keys
+            .filterNot { it.contains('/') }
+            .sortedWith(compareBy<String>({ it.length }, { it }))
+    }
+
+    fun listBindings(): List<MenuBindingDefinition> = snapshotRef.get().bindings
+
+    fun prepareFullReload(): PreparedMenuSnapshot {
         val parsedMenus = linkedMapOf<String, MenuDefinition>()
         val errors = mutableListOf<MenuLoadError>()
         val menuFolder = menuFolder()
@@ -35,52 +69,37 @@ class MenuRepository(
             loadMenuFile(menuFolder, file, parsedMenus, errors)
         }
 
-        val lookup = buildLookupTable(parsedMenus)
-
-        val applied = when {
-            errors.isEmpty() -> {
-                menus.clear()
-                menus.putAll(parsedMenus)
-                menuLookup.clear()
-                menuLookup.putAll(lookup)
-                true
-            }
-
-            menus.isEmpty() -> {
-                menus.clear()
-                menus.putAll(parsedMenus)
-                menuLookup.clear()
-                menuLookup.putAll(lookup)
-                true
-            }
-
-            else -> false
-        }
-
-        return MenuLoadReport(
-            scannedFiles = menuFiles.size,
-            loadedMenus = parsedMenus.size,
-            applied = applied,
-            errors = errors.toList(),
+        val snapshot = buildSnapshot(parsedMenus)
+        return PreparedMenuSnapshot(
+            snapshot = snapshot,
+            report = MenuLoadReport(
+                scannedFiles = menuFiles.size,
+                loadedMenus = parsedMenus.size,
+                applied = false,
+                errors = errors.toList(),
+            ),
         )
     }
 
-    fun menu(menuId: String): MenuDefinition? = menuLookup[normalizeMenuId(menuId)]
-
-    fun listMenuIds(): List<String> = menus.keys.toList()
-
-    fun listResolvableMenuIds(): List<String> {
-        return menuLookup.keys
-            .filterNot { it.contains('/') }
-            .sortedWith(compareBy<String>({ it.length }, { it }))
+    fun commitPrepared(prepared: PreparedMenuSnapshot): MenuLoadReport {
+        if (prepared.report.errors.isNotEmpty() && snapshotRef.get().menus.isNotEmpty()) {
+            return prepared.report.copy(applied = false)
+        }
+        snapshotRef.set(prepared.snapshot)
+        return prepared.report.copy(applied = true)
     }
-
-    fun listBindings(): List<MenuBindingDefinition> = menus.values.flatMap(MenuDefinition::bindings)
 
     fun applyFileChanges(
         upsertedFiles: Set<File>,
         deletedFiles: Set<File>,
     ): MenuLoadReport {
+        return commitPreparedFileChanges(prepareFileChanges(upsertedFiles, deletedFiles))
+    }
+
+    fun prepareFileChanges(
+        upsertedFiles: Set<File>,
+        deletedFiles: Set<File>,
+    ): PreparedMenuFileChanges {
         val menuFolder = menuFolder()
         if (!menuFolder.exists()) {
             menuFolder.mkdirs()
@@ -90,8 +109,9 @@ class MenuRepository(
         val changedMenuIds = linkedSetOf<String>()
         val reopenMenuIds = linkedSetOf<String>()
         val removedMenuIds = linkedSetOf<String>()
+        val oldSnapshot = snapshotRef.get()
         val workingMenus = linkedMapOf<String, MenuDefinition>()
-        workingMenus.putAll(menus)
+        workingMenus.putAll(oldSnapshot.menus)
         var hasMutation = false
 
         deletedFiles.sortedBy { relativeMenuPath(menuFolder, it).lowercase(Locale.ROOT) }.forEach { file ->
@@ -131,24 +151,31 @@ class MenuRepository(
         }
 
         val applied = errors.isEmpty() && hasMutation
-        if (applied) {
-            menus.clear()
-            menus.putAll(workingMenus)
-            rebuildLookupTable()
-        }
 
         val appliedChangedMenuIds = if (applied) changedMenuIds.toSet() else emptySet()
         val appliedRemovedMenuIds = if (applied) removedMenuIds.toSet() else emptySet()
         val appliedReopenMenuIds = if (applied) reopenMenuIds.toSet() else emptySet()
-        return MenuLoadReport(
+        return PreparedMenuFileChanges(
+            snapshot = if (applied) buildSnapshot(workingMenus) else null,
+            report = MenuLoadReport(
             scannedFiles = upsertedFiles.size + deletedFiles.size,
             loadedMenus = appliedChangedMenuIds.size,
-            applied = applied,
+            applied = false,
             errors = errors.toList(),
             changedMenuIds = appliedChangedMenuIds,
             removedMenuIds = appliedRemovedMenuIds,
             reopenMenuIds = appliedReopenMenuIds,
+            ),
+            hasMutation = hasMutation,
         )
+    }
+
+    fun commitPreparedFileChanges(prepared: PreparedMenuFileChanges): MenuLoadReport {
+        val applied = prepared.report.errors.isEmpty() && prepared.hasMutation && prepared.snapshot != null
+        if (applied) {
+            snapshotRef.set(prepared.snapshot)
+        }
+        return prepared.report.copy(applied = applied)
     }
 
     private fun loadMenuFile(
@@ -202,7 +229,34 @@ class MenuRepository(
             buttons = buttons,
             pageRegions = pageRegions,
             bindings = bindings,
-        )
+        ).also(::warnUnsafePromptConsoleActions)
+    }
+
+    private fun warnUnsafePromptConsoleActions(menu: MenuDefinition) {
+        if (!plugin.settings.warnUnsafeConsolePlaceholders) {
+            return
+        }
+        menu.prompts.values
+            .filter { prompt -> prompt.validation == null }
+            .forEach { prompt ->
+                if (containsUnsafeInputConsoleAction(prompt.submitActions)) {
+                    plugin.logger.warning(
+                        "Menu '${menu.id}' prompt '${prompt.id}' has console action containing {input} without validation. " +
+                            "Do not concatenate unvalidated player input into console commands.",
+                    )
+                }
+            }
+    }
+
+    private fun containsUnsafeInputConsoleAction(actions: List<MenuAction>): Boolean {
+        return actions.any { action ->
+            when (action) {
+                is MenuAction.ConsoleCommand -> action.command.contains("{input}", ignoreCase = true)
+                is MenuAction.Conditional -> containsUnsafeInputConsoleAction(action.successActions) ||
+                    containsUnsafeInputConsoleAction(action.denyActions)
+                else -> false
+            }
+        }
     }
 
     private fun buildLookupTable(parsedMenus: Map<String, MenuDefinition>): Map<String, MenuDefinition> {
@@ -228,9 +282,13 @@ class MenuRepository(
         return lookup
     }
 
-    private fun rebuildLookupTable() {
-        menuLookup.clear()
-        menuLookup.putAll(buildLookupTable(menus))
+    private fun buildSnapshot(parsedMenus: Map<String, MenuDefinition>): MenuSnapshot {
+        val menus = parsedMenus.toMap(LinkedHashMap())
+        return MenuSnapshot(
+            menus = menus,
+            lookup = buildLookupTable(menus),
+            bindings = menus.values.flatMap(MenuDefinition::bindings),
+        )
     }
 
     private fun canonicalMenuId(
@@ -1298,4 +1356,29 @@ data class MenuLoadReport(
 data class MenuLoadError(
     val fileName: String,
     val message: String,
+)
+
+data class MenuSnapshot(
+    val menus: Map<String, MenuDefinition>,
+    val lookup: Map<String, MenuDefinition>,
+    val bindings: List<MenuBindingDefinition>,
+) {
+    companion object {
+        val EMPTY = MenuSnapshot(
+            menus = emptyMap(),
+            lookup = emptyMap(),
+            bindings = emptyList(),
+        )
+    }
+}
+
+data class PreparedMenuSnapshot(
+    val snapshot: MenuSnapshot,
+    val report: MenuLoadReport,
+)
+
+data class PreparedMenuFileChanges(
+    val snapshot: MenuSnapshot?,
+    val report: MenuLoadReport,
+    val hasMutation: Boolean,
 )

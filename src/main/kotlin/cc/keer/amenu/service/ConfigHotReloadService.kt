@@ -71,24 +71,33 @@ class ConfigHotReloadService(
         if (!reloadQueued.compareAndSet(false, true)) {
             return
         }
-        scheduler.executeGlobal(Runnable {
-            try {
-                val pending = synchronized(queueLock) {
-                    val next = pendingChanges
-                    pendingChanges = MenuFileChanges.EMPTY
-                    next
-                }
-                val report = plugin.reloadChangedFiles(pending)
-                plugin.handleReloadReport(report, initiator = "auto")
-                snapshot = captureSnapshot()
-            } finally {
-                reloadQueued.set(false)
-                val hasPendingChanges = synchronized(queueLock) { !pendingChanges.isEmpty }
-                if (hasPendingChanges) {
-                    queueReload(MenuFileChanges.EMPTY)
-                }
+        val pending = synchronized(queueLock) {
+            val next = pendingChanges
+            pendingChanges = MenuFileChanges.EMPTY
+            next
+        }
+
+        java.util.concurrent.CompletableFuture
+            .supplyAsync { PreparedHotReload(plugin.prepareChangedFilesReload(pending), captureSnapshot()) }
+            .whenComplete { prepared, throwable ->
+                scheduler.executeGlobal(Runnable {
+                    try {
+                        if (throwable != null) {
+                            plugin.logger.severe("AMenu auto reload failed while parsing files asynchronously: ${throwable.message}")
+                        } else {
+                            val report = plugin.commitChangedFilesReload(prepared!!.reload)
+                            plugin.handleReloadReport(report, initiator = "auto")
+                            snapshot = prepared.snapshot
+                        }
+                    } finally {
+                        reloadQueued.set(false)
+                        val hasPendingChanges = synchronized(queueLock) { !pendingChanges.isEmpty }
+                        if (hasPendingChanges) {
+                            queueReload(MenuFileChanges.EMPTY)
+                        }
+                    }
+                })
             }
-        })
     }
 
     private fun captureSnapshot(): Map<String, FileStamp> {
@@ -166,6 +175,11 @@ class ConfigHotReloadService(
             val MISSING = FileStamp(-1L, -1L)
         }
     }
+
+    private data class PreparedHotReload(
+        val reload: cc.keer.amenu.PreparedChangedReload,
+        val snapshot: Map<String, FileStamp>,
+    )
 }
 
 data class MenuFileChanges(

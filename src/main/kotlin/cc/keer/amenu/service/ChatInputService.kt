@@ -9,13 +9,8 @@ import cc.keer.amenu.platform.PlatformScheduler
 import cc.keer.amenu.platform.TaskHandle
 import cc.keer.amenu.util.AdventureAccess
 import cc.keer.amenu.util.TextFormatter
-import io.papermc.paper.event.player.AsyncChatEvent
-import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
 import org.bukkit.Bukkit
 import org.bukkit.Material
-import org.bukkit.block.data.BlockData
-import org.bukkit.block.Sign
-import org.bukkit.block.sign.Side
 import org.bukkit.conversations.Conversation
 import org.bukkit.conversations.ConversationContext
 import org.bukkit.conversations.ConversationFactory
@@ -25,7 +20,6 @@ import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
-import org.bukkit.event.block.SignChangeEvent
 import org.bukkit.event.inventory.InventoryClickEvent
 import org.bukkit.event.inventory.InventoryCloseEvent
 import org.bukkit.event.inventory.InventoryDragEvent
@@ -101,16 +95,6 @@ class ChatInputService(
             PromptType.SIGN -> openSignPrompt(player, session)
             PromptType.ANVIL -> openAnvilPrompt(player, session)
         }
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
-    fun onAsyncChat(event: AsyncChatEvent) {
-        val session = acquireChatSession(event.player) ?: return
-        session.timeoutTask.cancel()
-        event.isCancelled = true
-
-        val message = PlainTextComponentSerializer.plainText().serialize(event.message()).trim()
-        platformScheduler.executeFor(event.player, Runnable { handleSubmittedText(event.player, session, message) })
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
@@ -212,32 +196,6 @@ class ChatInputService(
         menuService.executeActions(player, session.menuId, session.prompt.cancelActions, session.placeholders)
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
-    fun onSignChange(event: SignChangeEvent) {
-        val session = sessions[event.player.uniqueId] ?: return
-        val runtime = session.runtime as? InputRuntime.Sign ?: return
-        val actualLocation = event.block.location
-        val expectedLocation = runtime.location
-        val sameBlock = isSameBlock(actualLocation, expectedLocation)
-        val nearbyBlock = isNearbyBlock(actualLocation, expectedLocation, 8.0)
-        plugin.logger.info(
-            "[AMenu] SignChangeEvent player=${event.player.name} actual=${formatLocation(actualLocation)} " +
-                "expected=${formatLocation(expectedLocation)} sameBlock=$sameBlock nearby=$nearbyBlock " +
-                "lines=${(0..3).joinToString("|") { index -> event.getLine(index).orEmpty() }}"
-        )
-        if (!sameBlock && !nearbyBlock) {
-            plugin.logger.info("[AMenu] SignChangeEvent ignored because it does not match the active sign session.")
-            return
-        }
-        if (!sessions.remove(event.player.uniqueId, session)) {
-            plugin.logger.info("[AMenu] SignChangeEvent ignored because the active sign session was already replaced.")
-            return
-        }
-
-        val lines = (0..3).map { index -> event.getLine(index).orEmpty() }
-        processSignSubmission(event.player, session, runtime, lines)
-    }
-
     @EventHandler
     fun onPlayerQuit(event: PlayerQuitEvent) {
         sessions.remove(event.player.uniqueId)?.dispose()
@@ -305,64 +263,11 @@ class ChatInputService(
     }
 
     private fun openSignPrompt(player: Player, session: InputSession) {
-        val location = findTemporaryLocation(player)
-        if (location == null) {
-            plugin.logger.warning("[AMenu] Failed to open sign prompt for ${player.name}: no temporary location found.")
-            failUnsupportedPrompt(player, session, "sign")
-            return
-        }
-
-        val lines = List(4) { index ->
-            renderPromptText(player, session.prompt.signLines.getOrNull(index).orEmpty(), session.placeholders)
-        }
-        val block = location.block
-        val originalBlockData = block.blockData.clone()
-        block.setType(Material.OAK_SIGN, false)
-        val sign = block.state as? Sign
-        if (sign == null) {
-            block.blockData = originalBlockData
-            plugin.logger.warning(
-                "[AMenu] Failed to open sign prompt for ${player.name}: block at ${formatLocation(location)} is not a sign state."
-            )
-            failUnsupportedPrompt(player, session, "sign")
-            return
-        }
-
-        lines.forEachIndexed(sign::setLine)
-        sign.setEditable(true)
-        sign.setWaxed(false)
-        runCatching { sign.setAllowedEditorUniqueId(player.uniqueId) }
-        sign.update(true, false)
-        val runtime = InputRuntime.Sign(
-            location = sign.location,
-            initialLines = lines,
-            originalBlockData = originalBlockData,
+        plugin.logger.warning(
+            "[AMenu] SIGN prompt is disabled because safe virtual sign input requires an optional packet adapter. " +
+                "Use CHAT or ANVIL prompt instead. No world block was modified for ${player.name}.",
         )
-        session.runtime = runtime
-        plugin.logger.info(
-            "[AMenu] Opened sign prompt for ${player.name} at ${formatLocation(sign.location)} " +
-                "with lines=${lines.joinToString("|")}"
-        )
-        runtime.pollTask = platformScheduler.runRepeatingFor(player, 10L, 2L, Runnable {
-            pollSignInput(player.uniqueId, session)
-        })
-
-        platformScheduler.runLaterFor(player, 1L, Runnable {
-            val current = sessions[player.uniqueId]
-            if (current !== session) {
-                return@Runnable
-            }
-            if (!openSignEditor(player, sign)) {
-                sessions.remove(player.uniqueId, session)
-                session.dispose()
-                plugin.logger.warning(
-                    "[AMenu] Failed to open sign editor for ${player.name} at ${formatLocation(sign.location)}."
-                )
-                failUnsupportedPrompt(player, session, "sign")
-            } else {
-                plugin.logger.info("[AMenu] Sign editor opened for ${player.name} at ${formatLocation(sign.location)}.")
-            }
-        })
+        failUnsupportedPrompt(player, session, "sign")
     }
 
     private fun openChatPrompt(player: Player, session: InputSession) {
@@ -445,36 +350,6 @@ class ChatInputService(
         return placeholderPipeline.render(player, text, placeholders)
     }
 
-    private fun openSignEditor(player: Player, sign: Sign): Boolean {
-        runCatching {
-            player.openSign(sign, Side.FRONT)
-            return true
-        }
-
-        val methods = player.javaClass.methods.filter { it.name == "openSign" }
-        val signOnly = methods.firstOrNull { method ->
-            method.parameterCount == 1 && method.parameterTypes[0].isAssignableFrom(sign.javaClass)
-        }
-        if (signOnly != null) {
-            return runCatching {
-                signOnly.invoke(player, sign)
-                true
-            }.getOrDefault(false)
-        }
-
-        val withSide = methods.firstOrNull { method ->
-            method.parameterCount == 2 && method.parameterTypes[0].isAssignableFrom(sign.javaClass)
-        } ?: return false
-        val sideType = withSide.parameterTypes[1]
-        val front = sideType.enumConstants?.firstOrNull { constant ->
-            constant.toString().equals("FRONT", ignoreCase = true)
-        } ?: return false
-        return runCatching {
-            withSide.invoke(player, sign, front)
-            true
-        }.getOrDefault(false)
-    }
-
     private fun applyAnvilViewState(view: org.bukkit.inventory.InventoryView) {
         runCatching {
             view.javaClass.methods.firstOrNull { it.name == "setRepairCost" && it.parameterCount == 1 }
@@ -506,75 +381,10 @@ class ChatInputService(
         val session = sessions.remove(playerId) ?: return
         session.dispose()
         val player = plugin.server.getPlayer(playerId) ?: return
-        if (session.runtime is InputRuntime.Sign) {
-            plugin.logger.info("[AMenu] Sign prompt timed out for ${player.name}.")
-        }
         if (session.runtime is InputRuntime.Anvil) {
             player.closeInventory()
         }
         menuService.sendSystemMessage(player, "prompt-timeout")
-    }
-
-    private fun pollSignInput(playerId: UUID, expectedSession: InputSession) {
-        val session = sessions[playerId] ?: return
-        if (session !== expectedSession) {
-            return
-        }
-        val runtime = session.runtime as? InputRuntime.Sign ?: return
-        val player = plugin.server.getPlayer(playerId) ?: return
-        val sign = runtime.location.block.state as? Sign ?: return
-        val currentLines = (0..3).map { index -> sign.getLine(index).orEmpty() }
-        if (currentLines == runtime.initialLines) {
-            return
-        }
-        if (!sessions.remove(playerId, session)) {
-            return
-        }
-        plugin.logger.info(
-            "[AMenu] Sign polling captured input for ${player.name} at ${formatLocation(runtime.location)} " +
-                "lines=${currentLines.joinToString("|")}"
-        )
-        processSignSubmission(player, session, runtime, currentLines)
-    }
-
-    private fun processSignSubmission(
-        player: Player,
-        session: InputSession,
-        runtime: InputRuntime.Sign,
-        lines: List<String>,
-    ) {
-        val resolvedInput = resolveSignInput(runtime, lines)
-        if (resolvedInput == null) {
-            plugin.logger.info("[AMenu] Ignoring sign submission for ${player.name} because no editable content changed yet.")
-            sessions[player.uniqueId] = session
-            return
-        }
-
-        session.dispose()
-        if (lines.any { line -> session.prompt.cancelKeywords.contains(line.trim().lowercase()) }) {
-            menuService.executeActions(player, session.menuId, session.prompt.cancelActions, session.placeholders)
-            return
-        }
-
-        val extra = mapOf(
-            "line1" to lines.getOrNull(0).orEmpty(),
-            "line2" to lines.getOrNull(1).orEmpty(),
-            "line3" to lines.getOrNull(2).orEmpty(),
-            "line4" to lines.getOrNull(3).orEmpty(),
-        )
-        handleSubmittedText(player, session, resolvedInput, extra)
-    }
-
-    private fun resolveSignInput(runtime: InputRuntime.Sign, lines: List<String>): String? {
-        val changedLines = lines.mapIndexedNotNull { index, line ->
-            val initial = runtime.initialLines.getOrNull(index).orEmpty()
-            line.takeIf { it != initial }
-        }
-        val nonBlankChangedLines = changedLines.filter { it.isNotBlank() }
-        if (nonBlankChangedLines.isEmpty()) {
-            return null
-        }
-        return nonBlankChangedLines.joinToString("\n").trim()
     }
 
     private fun pollAnvilInput(playerId: UUID, expectedSession: InputSession) {
@@ -708,13 +518,7 @@ private class InputSession(
                     runCatching { conversation.abandon() }
                 }
             }
-            is InputRuntime.Sign -> {
-                active.pollTask.cancel()
-                val block = active.location.block
-                if (block.type == Material.OAK_SIGN) {
-                    block.blockData = active.originalBlockData
-                }
-            }
+            is InputRuntime.Sign -> Unit
 
             is InputRuntime.Anvil -> {
                 active.pollTask.cancel()
@@ -725,13 +529,7 @@ private class InputSession(
 
 private sealed interface InputRuntime {
     data class Chat(val conversation: Conversation? = null) : InputRuntime
-    data class Sign(
-        val location: org.bukkit.Location,
-        val initialLines: List<String>,
-        val originalBlockData: BlockData,
-        val virtualOnly: Boolean = false,
-        var pollTask: TaskHandle = TaskHandle.NOOP,
-    ) : InputRuntime
+    data object Sign : InputRuntime
     data class Anvil(
         val holder: PromptAnvilHolder,
         val initialText: String,

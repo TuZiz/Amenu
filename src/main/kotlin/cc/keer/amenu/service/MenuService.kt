@@ -34,6 +34,7 @@ import org.bukkit.inventory.ItemStack
 import java.time.Duration
 import java.util.ArrayDeque
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 import kotlin.math.max
 
@@ -49,10 +50,10 @@ class MenuService(
 ) {
 
     private lateinit var chatInputService: ChatInputService
-    private val history = mutableMapOf<UUID, ArrayDeque<String>>()
-    private val menuStates = mutableMapOf<UUID, MutableMap<String, MenuViewState>>()
-    private val closeCleanupSuppressed = mutableSetOf<UUID>()
-    private val pendingMenuOpens = mutableMapOf<UUID, cc.keer.amenu.platform.TaskHandle>()
+    private val history = ConcurrentHashMap<UUID, ArrayDeque<String>>()
+    private val menuStates = ConcurrentHashMap<UUID, MutableMap<String, MenuViewState>>()
+    private val closeCleanupSuppressed = ConcurrentHashMap.newKeySet<UUID>()
+    private val pendingMenuOpens = ConcurrentHashMap<UUID, cc.keer.amenu.platform.TaskHandle>()
 
     fun attachChatInputService(service: ChatInputService) {
         chatInputService = service
@@ -326,10 +327,7 @@ class MenuService(
             is MenuAction.Prompt -> chatInputService.startPrompt(player, menuId, action.promptId, placeholders)
             is MenuAction.Page -> changePage(player, menuId, action)
             is MenuAction.PlayerCommand -> player.performCommand(placeholderPipeline.render(player, action.command, placeholders))
-            is MenuAction.ConsoleCommand -> plugin.server.dispatchCommand(
-                plugin.server.consoleSender,
-                placeholderPipeline.render(player, action.command, placeholders),
-            )
+            is MenuAction.ConsoleCommand -> executeConsoleAction(player, action, placeholders)
 
             is MenuAction.Conditional -> Unit
             is MenuAction.TakePoint -> takePlayerPoints(player, action, placeholders)
@@ -344,10 +342,21 @@ class MenuService(
         action: MenuAction.TakePoint,
         placeholders: Map<String, String>,
     ) {
-        val amount = placeholderPipeline.render(player, action.amount, placeholders)
+        val amountText = placeholderPipeline.render(player, action.amount, placeholders).trim()
+        val amount = amountText.toDoubleOrNull()
+        if (amount == null || !amount.isFinite() || amount <= 0.0 || amount > settings.maxTakePoint) {
+            plugin.logger.warning(
+                "Rejected unsafe take-point amount for ${player.name}: '$amountText' (max=${settings.maxTakePoint}).",
+            )
+            return
+        }
+        if (takePlayerPointsViaApi(player, amount)) {
+            return
+        }
+        val commandAmount = if (amount % 1.0 == 0.0) amount.toLong().toString() else amount.toString()
         val commands = listOf(
-            "points take ${player.name} $amount -s",
-            "playerpoints take ${player.name} $amount -s",
+            "points take ${player.name} $commandAmount -s",
+            "playerpoints take ${player.name} $commandAmount -s",
         )
         if (commands.any(::dispatchConsole)) {
             return
@@ -355,6 +364,40 @@ class MenuService(
         plugin.logger.warning(
             "Failed to execute PlayerPoints deduction for ${player.name} (amount=$amount). Tried commands: ${commands.joinToString()}",
         )
+    }
+
+    private fun executeConsoleAction(
+        player: Player,
+        action: MenuAction.ConsoleCommand,
+        placeholders: Map<String, String>,
+    ) {
+        if (!settings.allowConsoleActions) {
+            plugin.logger.warning("Blocked console action because security.allow-console-actions=false: ${action.command}")
+            return
+        }
+        dispatchConsole(placeholderPipeline.render(player, action.command, placeholders))
+    }
+
+    private fun takePlayerPointsViaApi(player: Player, amount: Double): Boolean {
+        val provider = plugin.server.pluginManager.getPlugin("PlayerPoints")
+            ?.let { playerPoints -> runCatching { playerPoints.javaClass.methods.firstOrNull { it.name == "getAPI" }?.invoke(playerPoints) }.getOrNull() }
+            ?: return false
+
+        val method = provider.javaClass.methods.firstOrNull { method ->
+            method.name == "take" &&
+                method.parameterCount == 2 &&
+                method.parameterTypes[0].isAssignableFrom(UUID::class.java)
+        } ?: return false
+        val numericArgument = when (method.parameterTypes[1]) {
+            java.lang.Integer.TYPE, Integer::class.java -> amount.toInt()
+            java.lang.Long.TYPE, java.lang.Long::class.java -> amount.toLong()
+            java.lang.Double.TYPE, java.lang.Double::class.java -> amount
+            java.lang.Float.TYPE, java.lang.Float::class.java -> amount.toFloat()
+            else -> return false
+        }
+        return runCatching {
+            method.invoke(provider, player.uniqueId, numericArgument) as? Boolean ?: true
+        }.getOrDefault(false)
     }
 
     private fun dispatchConsole(command: String): Boolean {
@@ -438,8 +481,12 @@ class MenuService(
             return
         }
 
-        history.values.forEach { stack -> stack.removeAll(removedMenuIds) }
-        history.entries.removeIf { (_, stack) -> stack.isEmpty() }
+        history[player.uniqueId]?.let { stack ->
+            stack.removeAll(removedMenuIds)
+            if (stack.isEmpty()) {
+                history.remove(player.uniqueId, stack)
+            }
+        }
 
         removedMenuIds.forEach { menuId ->
             dynamicRefreshController.cancelMenu(player.uniqueId, menuId)
@@ -748,7 +795,7 @@ class MenuService(
 
     private fun stateFor(player: Player, menuId: String): MenuViewState {
         return menuStates
-            .getOrPut(player.uniqueId) { mutableMapOf() }
+            .computeIfAbsent(player.uniqueId) { mutableMapOf() }
             .getOrPut(menuId) { MenuViewState(player.uniqueId, menuId) }
     }
 
